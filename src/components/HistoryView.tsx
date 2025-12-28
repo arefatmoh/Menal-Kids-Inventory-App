@@ -98,7 +98,10 @@ export function HistoryView() {
     try {
       // Use RPC function to reverse the sale (handles stock restoration and sale update)
       const { error } = await supabase
-        .rpc('menal_reverse_sale', { sale_id: saleId });
+        .rpc('menal_reverse_sale', {
+          p_branch_id: currentBranchId,
+          p_sale_id: saleId
+        });
 
       if (error) throw error;
 

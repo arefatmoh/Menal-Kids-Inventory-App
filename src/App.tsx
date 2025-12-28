@@ -7,6 +7,7 @@ import {
   ShoppingCart,
   History,
   Users,
+  LayoutGrid
 } from "lucide-react";
 import { Dashboard } from "./components/Dashboard";
 import { Products } from "./components/Products";
@@ -46,7 +47,7 @@ function AppContent() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState<string>("user");
-  const { setCurrentBranchId } = useBranch();
+  const { setCurrentBranchId, currentBranch } = useBranch();
   const navigate = useNavigate();
   const location = useLocation();
   const { shouldShow, markAsSeen } = useLaunchCelebration();
@@ -180,7 +181,24 @@ function AppContent() {
               <h2 style={{ color: "var(--text-primary)", margin: 0 }}>
                 Menal Kids
               </h2>
-              {isAdmin && <BranchSwitcher />}
+              {isAdmin ? (
+                <BranchSwitcher />
+              ) : (
+                currentBranch && (
+                  <div
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all"
+                    style={{
+                      backgroundColor: 'var(--gray-light)',
+                      borderColor: 'var(--border)',
+                    }}
+                  >
+                    <LayoutGrid size={16} style={{ color: 'var(--primary)' }} />
+                    <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+                      {currentBranch.name}
+                    </span>
+                  </div>
+                )
+              )}
             </div>
             <ProfileDropdown
               onLogout={handleLogout}

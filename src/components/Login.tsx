@@ -76,7 +76,7 @@ export function Login({ onLoginSuccess }: LoginProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-start sm:items-center justify-center relative overflow-hidden font-nunito" style={{ padding: '40px 20px' }}>
+    <div className="fixed inset-0 min-h-screen flex items-center justify-center relative overflow-hidden font-nunito" style={{ padding: '20px', minHeight: '100dvh' }}>
       {/* Decorative circles */}
       <div
         style={{

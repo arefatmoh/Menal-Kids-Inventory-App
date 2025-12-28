@@ -161,30 +161,32 @@ export function Products({ isAdmin }: ProductsProps) {
     }
 
     try {
-      const generateId = () => `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-      // Get product details before deletion
+      // 1. Get product details before deletion
       const { data: product } = await supabase
         .from('menal_products')
         .select('*')
         .eq('id', id)
         .single();
 
+      // 2. Log deletion activity BEFORE the product is gone
+      // We store the ID in metadata instead of the product_id column
+      // so the CASCADE doesn't delete this log entry itself.
+      const logId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      await supabase.from('menal_activity_log').insert({
+        id: logId,
+        branch_id: currentBranchId,
+        type: 'product_deleted',
+        details: `Product "${name}" deleted (ID: ${id})`,
+        metadata: { ...product, productName: name, originalProductId: id },
+      });
+
+      // 3. Delete the product (CASCADE handles old logs and sale items)
       const { error } = await supabase
         .from('menal_products')
         .delete()
         .eq('id', id);
 
       if (error) throw error;
-
-      // Log deletion activity
-      await supabase.from('menal_activity_log').insert({
-        id: generateId(),
-        type: 'product_deleted',
-        product_id: id,
-        details: `Product "${name}" deleted`,
-        metadata: { ...product, productName: name },
-      });
 
       toast.success('Product deleted successfully!');
       fetchProducts(page, selectedCategory, searchQuery, false);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, UserPlus, Settings, LogOut, X, Eye, EyeOff, Users, Receipt } from 'lucide-react';
+import { User, UserPlus, Settings, LogOut, X, Eye, EyeOff, Users, Receipt, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '../utils/supabase/client';
 import { toast } from 'sonner';
 import { useBranch } from '../context/BranchContext';
@@ -17,9 +17,10 @@ interface ProfileDropdownProps {
   userRole: string;
   onCustomerManagementClick?: () => void;
   onExpensesClick?: () => void;
+  onExcelClick?: () => void;
 }
 
-export function ProfileDropdown({ username, onLogout, userRole, onCustomerManagementClick, onExpensesClick }: ProfileDropdownProps) {
+export function ProfileDropdown({ username, onLogout, userRole, onCustomerManagementClick, onExpensesClick, onExcelClick }: ProfileDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
@@ -209,6 +210,8 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
                 padding: '10px 12px',
                 border: 'none',
                 textAlign: 'left',
+                fontSize: '14px',
+                cursor: 'pointer',
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = 'var(--gray-light)';
@@ -220,6 +223,36 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
               <Receipt size={18} style={{ color: 'var(--primary)' }} />
               <span style={{ fontSize: '14px' }}>Expenses</span>
             </button>
+
+            {userRole === 'admin' && (
+              <button
+                onClick={() => {
+                  if (onExcelClick) {
+                    onExcelClick();
+                  }
+                  setIsOpen(false);
+                }}
+                className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                style={{
+                  backgroundColor: 'transparent',
+                  color: 'var(--text-primary)',
+                  padding: '10px 12px',
+                  border: 'none',
+                  textAlign: 'left',
+                  fontSize: '14px',
+                  cursor: 'pointer',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = 'transparent';
+                }}
+              >
+                <FileSpreadsheet size={18} style={{ color: 'var(--primary)' }} />
+                <span style={{ fontSize: '14px' }}>Excel Upload</span>
+              </button>
+            )}
 
             <button
               onClick={() => {

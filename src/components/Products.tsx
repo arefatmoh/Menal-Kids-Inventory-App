@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Plus, Search, Edit, Trash2, Package, AlertTriangle, PlusCircle, MinusCircle, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
 import { ProductForm } from './ProductForm';
 import { StockAdjustment } from './StockAdjustment';
@@ -6,6 +6,16 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
+import { fetchCategories as fetchCategoriesUtil, addCategory } from '../utils/categories';
+
+// Simple debounce function
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+  let timeout: NodeJS.Timeout;
+  return ((...args: Parameters<T>) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  }) as T;
+}
 
 interface Product {
   id: string;
@@ -51,6 +61,7 @@ export function Products({ isAdmin }: ProductsProps) {
      Update: Moving filtering to server-side to ensure pagination works correctly 
      with specific categories or search queries.
   */
+  
   const fetchProducts = async (pageNumber: number, category: string, search: string, reset = false) => {
     // Only fetch if we have a branch ID
     if (!currentBranchId) return;
@@ -63,9 +74,9 @@ export function Products({ isAdmin }: ProductsProps) {
       let query = supabase
         .from('menal_products')
         .select('*', { count: 'exact' }) // Get count for pagination
-        .eq('branch_id', currentBranchId);
+        .eq('branch_id', currentBranchId)
+        .not('name', 'like', '[Category Placeholder]%');
 
-      // Apply server-side filters
       if (category !== 'all') {
         query = query.eq('category', category);
       }
@@ -81,40 +92,31 @@ export function Products({ isAdmin }: ProductsProps) {
       if (error) {
         if (error.code === '42703' || error.code === '42P01') {
           console.error('Database schema error:', error);
-          toast.error('Database not set up.');
-          setProducts([]);
-          setFilteredProducts([]); // filteredProducts is redundant now but kept for compatibility
+          toast.error('Database not set up. Please run the SQL schema in Supabase Dashboard. See SUPABASE_SETUP_GUIDE.md');
           return;
         }
         throw error;
       }
 
-      // Map database columns to component interface
-      const mappedProducts = (data || []).map(p => ({
-        id: p.id,
-        name: p.name,
-        category: p.category,
-        price: p.price ?? 0,
-        stock: p.stock ?? 0,
-        minStock: p.min_stock || 0,
-        notes: p.notes || '',
-        createdAt: p.created_at,
-        updatedAt: p.created_at,
-        expiry_date: p.expiry_date
-      }));
+      const productsData = data || [];
+      const totalCountValue = count || 0;
 
-      // Determine if there are more items
-      if (data.length < PAGE_SIZE) {
-        setHasMore(false);
+      if (reset) {
+        setProducts(productsData);
+        setFilteredProducts(productsData);
       } else {
-        setHasMore(true);
+        setProducts(prev => [...prev, ...productsData]);
+        setFilteredProducts(prev => [...prev, ...productsData]);
       }
 
-      setProducts(mappedProducts);
-      setFilteredProducts(mappedProducts);
-      setTotalCount(count || 0);
+      setTotalCount(totalCountValue);
+      setHasMore(productsData.length === PAGE_SIZE && (from + productsData.length) < totalCountValue);
 
-      if (reset) fetchCategories();
+      // Fetch categories when we get products
+      if (productsData.length > 0 && categories.length <= 1) {
+        fetchCategories();
+      }
+
     } catch (error) {
       console.error('Products fetch error:', error);
       toast.error('Failed to load products');
@@ -123,37 +125,30 @@ export function Products({ isAdmin }: ProductsProps) {
     }
   };
 
+  // Debounced search function
+  const debouncedSearch = useRef(
+    debounce((category: string, search: string) => {
+      setPage(0);
+      setHasMore(true);
+      fetchProducts(0, category, search, true);
+    }, 300)
+  ).current;
+
   useEffect(() => {
-    setPage(0);
-    setHasMore(true);
-    // Debounce search could be added here, but for now direct call
-    const timer = setTimeout(() => {
+    debouncedSearch(selectedCategory, searchQuery);
+  }, [selectedCategory, searchQuery]); // Remove debouncedSearch from dependencies
+
+  // Initial load
+  useEffect(() => {
+    if (currentBranchId) {
       fetchProducts(0, selectedCategory, searchQuery, true);
-    }, 300); // Small delay for typing
-    return () => clearTimeout(timer);
-  }, [currentBranchId, selectedCategory, searchQuery]);
+    }
+  }, [currentBranchId]);
 
-  // Remove the old client-side filtering useEffect
-  // useEffect(() => { ... }) 
-
-  const handleNextPage = () => {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchProducts(nextPage, selectedCategory, searchQuery, false);
-  };
-
-  const handlePrevPage = () => {
-    const prevPage = Math.max(0, page - 1);
-    setPage(prevPage);
-    fetchProducts(prevPage, selectedCategory, searchQuery, false);
-  };
-
-  /* 
-     Client-side filtering removed in favor of Server-side filtering 
-     to support correct pagination.
-  */
-
-
+  // Initial categories fetch
+  useEffect(() => {
+    fetchCategories();
+  }, [currentBranchId]);
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Are you sure you want to delete "${name}"?`)) {
@@ -169,8 +164,6 @@ export function Products({ isAdmin }: ProductsProps) {
         .single();
 
       // 2. Log deletion activity BEFORE the product is gone
-      // We store the ID in metadata instead of the product_id column
-      // so the CASCADE doesn't delete this log entry itself.
       const logId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       await supabase.from('menal_activity_log').insert({
         id: logId,
@@ -180,7 +173,7 @@ export function Products({ isAdmin }: ProductsProps) {
         metadata: { ...product, productName: name, originalProductId: id },
       });
 
-      // 3. Delete the product (CASCADE handles old logs and sale items)
+      // 3. Delete the product
       const { error } = await supabase
         .from('menal_products')
         .delete()
@@ -199,16 +192,8 @@ export function Products({ isAdmin }: ProductsProps) {
   const fetchCategories = async () => {
     if (!currentBranchId) return;
     try {
-      const { data, error } = await supabase
-        .from('menal_product_categories')
-        .select('name')
-        .eq('branch_id', currentBranchId)
-        .order('name');
-
-      if (error) throw error;
-
-      const categoryList = data.map(c => c.name);
-      setCategories(['all', ...categoryList]);
+      const categories = await fetchCategoriesUtil(currentBranchId);
+      setCategories(['all', ...categories]);
     } catch (error) {
       console.error('Fetch categories error:', error);
     }
@@ -217,38 +202,37 @@ export function Products({ isAdmin }: ProductsProps) {
   const handleAddCategory = async () => {
     if (!newCategory.trim() || !currentBranchId) return;
 
-    // Optimistic update
     const categoryName = newCategory.trim();
-    setCategories(prev => [...prev, categoryName].sort());
+    
+    // Check if category already exists
+    if (categories.includes(categoryName)) {
+      toast.error('Category already exists');
+      return;
+    }
+
+    // Optimistic update
+    setCategories(prev => {
+      const withoutAll = prev.filter(c => c !== 'all');
+      return ['all', ...[...withoutAll, categoryName].sort()];
+    });
     setNewCategory('');
     setShowAddCategory(false);
 
-    try {
-      const { error } = await supabase
-        .from('menal_product_categories')
-        .insert({
-          branch_id: currentBranchId,
-          name: categoryName
-        });
-
-      if (error) {
-        // Rollback if duplicate or error
-        if (error.code === '23505') { // Unique violation
-          toast.error('Category already exists');
-        } else {
-          throw error;
-        }
-        fetchCategories(); // Refresh to be safe
-        return;
-      }
-
-      toast.success('Category added successfully');
-      fetchCategories();
-    } catch (error) {
-      console.error('Add category error:', error);
-      toast.error('Failed to save category');
-      fetchCategories(); // Revert
+    const result = await addCategory(currentBranchId, categoryName);
+    
+    if (!result.success) {
+      // Rollback optimistic update
+      setCategories(prev => prev.filter(cat => cat !== categoryName));
+      toast.error(result.error || 'Failed to add category');
+      return;
     }
+
+    toast.success(`Category "${categoryName}" added successfully`);
+    fetchCategories(); // Refresh categories
+    // Refresh products safely (reset=true) to avoid appending duplicates that cause duplicate React keys
+    setPage(0);
+    setHasMore(true);
+    fetchProducts(0, selectedCategory, searchQuery, true);
   };
 
   const handleEdit = (product: Product) => {
@@ -257,23 +241,26 @@ export function Products({ isAdmin }: ProductsProps) {
   };
 
   const handleAddStock = (product: Product) => {
-    setAdjustingProduct({ ...product, adjustment: 1 } as any);
+    setAdjustingProduct({ ...product, adjustmentType: 'add' } as any);
+    setShowStockAdjustment(true);
+  };
+
+  const handleRemoveStock = (product: Product) => {
+    setAdjustingProduct({ ...product, adjustmentType: 'remove' } as any);
     setShowStockAdjustment(true);
   };
 
   const handleFormClose = () => {
     setShowForm(false);
     setEditingProduct(null);
-    fetchProducts(page, selectedCategory, searchQuery, false);
   };
 
   const handleStockAdjustmentClose = () => {
     setShowStockAdjustment(false);
     setAdjustingProduct(null);
-    fetchProducts(page, selectedCategory, searchQuery, false);
   };
 
-  const lowStockProducts = products.filter(p => p.stock <= p.minStock && p.minStock > 0);
+  const lowStockProducts = products.filter(p => p.stock <= p.minStock && p.stock > 0);
 
   // Calculate expiring products
   const now = new Date();
@@ -338,7 +325,7 @@ export function Products({ isAdmin }: ProductsProps) {
             <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
               {lowStockProducts.map((product) => (
                 <div
-                  key={product.id}
+                  key={`low-stock-${product.id}`}
                   className="flex items-center justify-between py-2 text-sm"
                   style={{ color: 'var(--text-secondary)' }}
                 >
@@ -377,7 +364,7 @@ export function Products({ isAdmin }: ProductsProps) {
             <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(0,0,0,0.1)' }}>
               {expiringProducts.map((product) => (
                 <div
-                  key={product.id}
+                  key={`expiring-${product.id}`}
                   className="flex items-center justify-between py-2 text-sm"
                   style={{ color: 'var(--text-secondary)' }}
                 >
@@ -403,6 +390,7 @@ export function Products({ isAdmin }: ProductsProps) {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="flex-1 px-3 py-2.5 rounded-lg border-none outline-none"
             style={{ backgroundColor: 'var(--gray-light)', color: 'var(--text-primary)' }}
+            key="products-search-input"
           />
         </div>
 
@@ -504,7 +492,7 @@ export function Products({ isAdmin }: ProductsProps) {
 
             return (
               <div
-                key={product.id}
+                key={`product-${product.id}`}
                 onClick={() => setSelectedProductId(isExpanded ? null : product.id)}
                 className="rounded-xl shadow-sm border transition-all cursor-pointer hover:shadow-md"
                 style={{
@@ -721,6 +709,7 @@ export function Products({ isAdmin }: ProductsProps) {
         <ProductForm
           product={editingProduct}
           onClose={handleFormClose}
+          onProductAdded={fetchCategories}
         />
       )}
 

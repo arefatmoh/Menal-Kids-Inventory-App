@@ -32,6 +32,39 @@ interface DashboardData {
   }>;
 }
 
+interface SalesDetail {
+  id: string;
+  created_at: string;
+  final_total: number;
+  payment_details: {
+    cash: number;
+    bank: number;
+    telebirr: number;
+  };
+  items: Array<{
+    product_name: string;
+    quantity: number;
+    total: number;
+  }>;
+}
+
+interface ExpenseDetail {
+  id: string;
+  created_at: string;
+  name: string;
+  amount: number;
+  notes: string;
+}
+
+interface StockDetail {
+  id: string;
+  name: string;
+  category: string;
+  stock: number;
+  price: number;
+  total_value: number;
+}
+
 interface ActivityEntry {
   id: string;
   type: 'product_created' | 'product_deleted' | 'stock_adjustment' | 'sale' | 'sale_reversed' | 'expense' | 'expense_deleted';
@@ -57,6 +90,11 @@ export function Dashboard({ isAdmin }: DashboardProps) {
   const [hasMoreActivities, setHasMoreActivities] = useState(true);
   const [totalActivitiesCount, setTotalActivitiesCount] = useState(0);
   const ACTIVITY_PAGE_SIZE = 5;
+
+  // Detail view states
+  const [showDetail, setShowDetail] = useState<string | null>(null);
+  const [detailData, setDetailData] = useState<SalesDetail[] | ExpenseDetail[] | StockDetail[]>([]);
+  const [detailLoading, setDetailLoading] = useState(false);
 
   const fetchDashboard = async () => {
     if (!currentBranchId) return;
@@ -107,11 +145,11 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         .from('menal_expenses')
         .select('*')
         .eq('branch_id', currentBranchId)
-        .gte('date', startDate.toISOString());
+        .gte('created_at', startDate.toISOString());
 
       if (expensesError) throw expensesError;
 
-      // Fetch products for stock info
+      // Fetch products data for stock value
       const { data: productsData, error: productsError } = await supabase
         .from('menal_products')
         .select('*')
@@ -160,23 +198,35 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         });
       });
 
-      const topProducts = Object.entries(productSales)
-        .map(([id, data]) => ({ id, ...data }))
+      const topProducts = Object.values(productSales)
         .sort((a, b) => b.revenue - a.revenue)
-        .slice(0, 5);
+        .slice(0, 5)
+        .map((product, index) => ({
+          id: `top-${index}`,
+          name: product.name,
+          quantity: product.quantity,
+          revenue: product.revenue,
+        }));
 
-      // Stock metrics
-      const stockValue = productsData?.reduce((sum, p) => sum + (p.stock * p.price), 0) || 0;
-      const lowStockCount = productsData?.filter(p => p.min_stock > 0 && p.stock <= p.min_stock).length || 0;
+      // Stock value
+      const stockValue = productsData?.reduce((sum, product) => sum + (product.stock * (product.price || 0)), 0) || 0;
+
+      // Low stock count
+      const lowStockCount = productsData?.filter(product => 
+        product.min_stock > 0 && product.stock <= product.min_stock
+      ).length || 0;
+
+      // Product count
       const productCount = productsData?.length || 0;
 
       // Expiring products
-      const expiringProducts = productsData?.filter(p => p.expiry_date)
+      const expiringProducts = productsData
+        ?.filter(p => p.expiry_date)
         .map(p => ({
           id: p.id,
           name: p.name,
-          expiry_date: p.expiry_date,
-          daysUntilExpiry: Math.ceil((new Date(p.expiry_date).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+          expiry_date: p.expiry_date!,
+          daysUntilExpiry: Math.ceil((new Date(p.expiry_date!).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
         }))
         .filter(p => p.daysUntilExpiry <= 180 && p.daysUntilExpiry > 0) // Show products expiring in the next 6 months
         .sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry) || [];
@@ -197,6 +247,216 @@ export function Dashboard({ isAdmin }: DashboardProps) {
       console.error('Dashboard fetch error:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Fetch detailed data functions
+  const fetchSalesDetails = async () => {
+    if (!currentBranchId) return;
+    setDetailLoading(true);
+    try {
+      const now = new Date();
+      let startDate: Date;
+
+      switch (dateRange) {
+        case 'today':
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          break;
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '2weeks':
+          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'year':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+      }
+
+      const { data, error } = await supabase
+        .from('menal_sales')
+        .select('*, menal_sale_items(*)')
+        .eq('branch_id', currentBranchId)
+        .gte('created_at', startDate.toISOString())
+        .eq('is_reversed', false)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const salesDetails: SalesDetail[] = data?.map(sale => ({
+        id: sale.id,
+        created_at: sale.created_at,
+        final_total: sale.final_total,
+        payment_details: sale.payment_details || { cash: 0, bank: 0, telebirr: 0 },
+        items: sale.menal_sale_items?.map((item: any) => ({
+          product_name: item.product_name,
+          quantity: item.quantity,
+          total: item.total,
+        })) || [],
+      })) || [];
+
+      setDetailData(salesDetails);
+      setShowDetail('sales');
+    } catch (error) {
+      console.error('Error fetching sales details:', error);
+      toast.error('Failed to load sales details');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const fetchPaymentMethodDetails = async (paymentMethod: 'cash' | 'bank' | 'telebirr') => {
+    if (!currentBranchId) return;
+    setDetailLoading(true);
+    try {
+      const now = new Date();
+      let startDate: Date;
+
+      switch (dateRange) {
+        case 'today':
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          break;
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '2weeks':
+          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'year':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+      }
+
+      const { data, error } = await supabase
+        .from('menal_sales')
+        .select('*, menal_sale_items(*)')
+        .eq('branch_id', currentBranchId)
+        .gte('created_at', startDate.toISOString())
+        .eq('is_reversed', false)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      // Filter sales by payment method
+      const filteredSales = data?.filter(sale => {
+        const details = sale.payment_details || { cash: 0, bank: 0, telebirr: 0 };
+        return details[paymentMethod] > 0;
+      }) || [];
+
+      const salesDetails: SalesDetail[] = filteredSales.map(sale => ({
+        id: sale.id,
+        created_at: sale.created_at,
+        final_total: sale.final_total,
+        payment_details: sale.payment_details || { cash: 0, bank: 0, telebirr: 0 },
+        items: sale.menal_sale_items?.map((item: any) => ({
+          product_name: item.product_name,
+          quantity: item.quantity,
+          total: item.total,
+        })) || [],
+      }));
+
+      setDetailData(salesDetails);
+      setShowDetail(`payment-${paymentMethod}`);
+    } catch (error) {
+      console.error('Error fetching payment method details:', error);
+      toast.error('Failed to load payment details');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const fetchExpenseDetails = async () => {
+    if (!currentBranchId) return;
+    setDetailLoading(true);
+    try {
+      const now = new Date();
+      let startDate: Date;
+
+      switch (dateRange) {
+        case 'today':
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+          break;
+        case 'week':
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        case '2weeks':
+          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'year':
+          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+          break;
+        default:
+          startDate = new Date(now.setHours(0, 0, 0, 0));
+      }
+
+      const { data, error } = await supabase
+        .from('menal_expenses')
+        .select('*')
+        .eq('branch_id', currentBranchId)
+        .gte('created_at', startDate.toISOString())
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      const expenseDetails: ExpenseDetail[] = data?.map(expense => ({
+        id: expense.id,
+        created_at: expense.created_at,
+        name: expense.name,
+        amount: expense.amount,
+        notes: expense.notes || '',
+      })) || [];
+
+      setDetailData(expenseDetails);
+      setShowDetail('expenses');
+    } catch (error) {
+      console.error('Error fetching expense details:', error);
+      toast.error('Failed to load expense details');
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const fetchStockDetails = async () => {
+    if (!currentBranchId) return;
+    setDetailLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('menal_products')
+        .select('*')
+        .eq('branch_id', currentBranchId)
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+
+      const stockDetails: StockDetail[] = data?.map(product => ({
+        id: product.id,
+        name: product.name,
+        category: product.category,
+        stock: product.stock || 0,
+        price: product.price || 0,
+        total_value: (product.stock || 0) * (product.price || 0),
+      })) || [];
+
+      setDetailData(stockDetails);
+      setShowDetail('stock');
+    } catch (error) {
+      console.error('Error fetching stock details:', error);
+      toast.error('Failed to load stock details');
+    } finally {
+      setDetailLoading(false);
     }
   };
 
@@ -329,8 +589,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
       {/* Sales & Expenses - Reduced Height */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
         <div
-          className="rounded-2xl shadow-sm border"
+          className="rounded-2xl shadow-sm border cursor-pointer hover:shadow-md transition-all"
           style={{ backgroundColor: 'var(--gray-light)', borderColor: 'var(--border)', padding: '16px' }}
+          onClick={fetchSalesDetails}
         >
           <div style={{ marginBottom: '10px' }}>
             <TrendingUp size={20} style={{ color: 'var(--success)' }} />
@@ -342,8 +603,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         </div>
 
         <div
-          className="rounded-2xl shadow-sm border"
+          className="rounded-2xl shadow-sm border cursor-pointer hover:shadow-md transition-all"
           style={{ backgroundColor: 'var(--gray-light)', borderColor: 'var(--border)', padding: '16px' }}
+          onClick={fetchExpenseDetails}
         >
           <div style={{ marginBottom: '10px' }}>
             <TrendingDown size={20} style={{ color: 'var(--danger)' }} />
@@ -372,8 +634,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
 
         {isAdmin && (
           <div
-            className="rounded-2xl shadow-sm border"
+            className="rounded-2xl shadow-sm border cursor-pointer hover:shadow-md transition-all"
             style={{ backgroundColor: 'var(--secondary)', borderColor: 'var(--border)', padding: '16px' }}
+            onClick={fetchStockDetails}
           >
             <div style={{ marginBottom: '10px' }}>
               <Package size={20} style={{ color: 'var(--primary)' }} />
@@ -447,8 +710,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         <h3 style={{ color: 'var(--text-primary)', marginBottom: '14px', fontSize: '16px' }}>Payment Breakdown</h3>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
           <div
-            className="flex items-center justify-between rounded-lg"
+            className="flex items-center justify-between rounded-lg cursor-pointer hover:shadow-md transition-all"
             style={{ backgroundColor: 'var(--gray-light)', padding: '12px' }}
+            onClick={() => fetchPaymentMethodDetails('cash')}
           >
             <div className="flex items-center gap-2">
               <div
@@ -474,8 +738,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
           </div>
 
           <div
-            className="flex items-center justify-between rounded-lg"
+            className="flex items-center justify-between rounded-lg cursor-pointer hover:shadow-md transition-all"
             style={{ backgroundColor: 'var(--gray-light)', padding: '12px' }}
+            onClick={() => fetchPaymentMethodDetails('bank')}
           >
             <div className="flex items-center gap-2">
               <div
@@ -501,8 +766,9 @@ export function Dashboard({ isAdmin }: DashboardProps) {
           </div>
 
           <div
-            className="flex items-center justify-between rounded-lg"
+            className="flex items-center justify-between rounded-lg cursor-pointer hover:shadow-md transition-all"
             style={{ backgroundColor: 'var(--gray-light)', padding: '12px' }}
+            onClick={() => fetchPaymentMethodDetails('telebirr')}
           >
             <div className="flex items-center gap-2">
               <div
@@ -666,7 +932,8 @@ export function Dashboard({ isAdmin }: DashboardProps) {
                           month: 'short',
                           day: 'numeric',
                           hour: 'numeric',
-                          minute: '2-digit'
+                          minute: '2-digit',
+                          hour12: true
                         })}
                       </span>
                     </div>
@@ -704,6 +971,254 @@ export function Dashboard({ isAdmin }: DashboardProps) {
               >
                 Next
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Detail Views */}
+      {showDetail && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setShowDetail(null)}
+        >
+          <div
+            className="rounded-2xl shadow-lg w-full overflow-hidden"
+            style={{ 
+              backgroundColor: 'var(--background)',
+              maxWidth: 'var(--container-max-width)',
+              margin: '0 auto'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div
+              className="flex items-center justify-between border-b"
+              style={{ 
+                borderColor: 'var(--border)',
+                padding: 'var(--container-padding)'
+              }}
+            >
+              <h2 style={{ color: 'var(--text-primary)', fontSize: '18px', fontWeight: '600' }}>
+                {showDetail === 'sales' && 'Sales Details'}
+                {showDetail === 'expenses' && 'Expense Details'}
+                {showDetail === 'stock' && 'Stock Details'}
+                {showDetail === 'payment-cash' && 'Cash Payment Details'}
+                {showDetail === 'payment-bank' && 'Bank Payment Details'}
+                {showDetail === 'payment-telebirr' && 'Telebirr Payment Details'}
+              </h2>
+              <button
+                onClick={() => setShowDetail(null)}
+                className="rounded-lg p-2 transition-all"
+                style={{ backgroundColor: 'var(--gray-light)', color: 'var(--text-primary)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Content */}
+            <div 
+              className="overflow-auto" 
+              style={{ 
+                padding: 'var(--container-padding)',
+                maxHeight: '70vh'
+              }}
+            >
+              {detailLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <LoadingSpinner />
+                </div>
+              ) : (
+                <>
+                  {showDetail === 'sales' && (
+                    <div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'var(--gray-light)' }}>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Date</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Time</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Products</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Total</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Cash</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Bank</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Tele</th>
+                              <th style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Payment</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(detailData as SalesDetail[]).map((sale) => (
+                              <tr key={sale.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {new Date(sale.created_at).toLocaleDateString()}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {sale.items.map(item => item.product_name).join(', ')}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {sale.final_total.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {sale.payment_details.cash.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {sale.payment_details.bank.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {sale.payment_details.telebirr.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'center' }}>
+                                  <span
+                                    className="px-1 py-0.5 rounded text-xs"
+                                    style={{
+                                      backgroundColor: sale.payment_details.cash > 0 ? 'var(--success)' : 'var(--gray-light)',
+                                      color: sale.payment_details.cash > 0 ? 'white' : 'var(--text-primary)',
+                                      fontSize: '10px'
+                                    }}
+                                  >
+                                    {sale.payment_details.cash > 0 ? 'Cash' : 
+                                     sale.payment_details.bank > 0 ? 'Bank' : 'Tele'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {(showDetail === 'payment-cash' || showDetail === 'payment-bank' || showDetail === 'payment-telebirr') && (
+                    <div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'var(--gray-light)' }}>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Date</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Time</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Products</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Total</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>
+                                {showDetail === 'payment-cash' && 'Cash Amount'}
+                                {showDetail === 'payment-bank' && 'Bank Amount'}
+                                {showDetail === 'payment-telebirr' && 'Telebirr Amount'}
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(detailData as SalesDetail[]).map((sale) => {
+                              const paymentAmount = showDetail === 'payment-cash' ? sale.payment_details.cash :
+                                                  showDetail === 'payment-bank' ? sale.payment_details.bank :
+                                                  sale.payment_details.telebirr;
+                              return (
+                                <tr key={sale.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                  <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                    {new Date(sale.created_at).toLocaleDateString()}
+                                  </td>
+                                  <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                    {new Date(sale.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                  </td>
+                                  <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {sale.items.map(item => item.product_name).join(', ')}
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                    {sale.final_total.toFixed(2)}
+                                  </td>
+                                  <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '600' }}>
+                                    {paymentAmount.toFixed(2)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {showDetail === 'expenses' && (
+                    <div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'var(--gray-light)' }}>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Date</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Time</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Expense</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Amount</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(detailData as ExpenseDetail[]).map((expense) => (
+                              <tr key={expense.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {new Date(expense.created_at).toLocaleDateString()}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {new Date(expense.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {expense.name}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {expense.amount.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-secondary)', fontSize: '12px', maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {expense.notes || '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {showDetail === 'stock' && (
+                    <div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                          <thead>
+                            <tr style={{ backgroundColor: 'var(--gray-light)' }}>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Product</th>
+                              <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Category</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Stock</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Price</th>
+                              <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontSize: '12px' }}>Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(detailData as StockDetail[]).map((product) => (
+                              <tr key={product.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {product.name}
+                                </td>
+                                <td style={{ padding: '8px', color: 'var(--text-primary)', fontSize: '12px', maxWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {product.category}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {product.stock}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px' }}>
+                                  {product.price.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)', fontSize: '12px', fontWeight: '600' }}>
+                                  {product.total_value.toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

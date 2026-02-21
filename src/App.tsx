@@ -26,6 +26,7 @@ import { useFavicon } from "./utils/useFavicon";
 import { useLaunchCelebration } from "./utils/useLaunchCelebration";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BranchProvider, useBranch } from "./context/BranchContext";
+import { ExcelUpload } from "./components/ExcelUpload";
 
 
 export default function App() {
@@ -62,8 +63,15 @@ function AppContent() {
         setIsLoggedIn(true);
         setUsername(userData.username);
         setUserRole(userData.role || "user");
-        if (userData.branch_id) {
+        
+        // Only set branch from user data if no branch is already stored in localStorage
+        // This preserves manual branch selection by admin/owner users
+        const storedBranchId = localStorage.getItem('menal_branch_id');
+        if (!storedBranchId && userData.branch_id) {
+          console.log('Setting branch from user data (no manual selection found):', userData.branch_id);
           setCurrentBranchId(userData.branch_id);
+        } else if (storedBranchId) {
+          console.log('Keeping manually selected branch:', storedBranchId);
         }
       } catch (error) {
         console.error('Error parsing stored user:', error);
@@ -87,9 +95,16 @@ function AppContent() {
     setIsLoggedIn(true);
     setUsername(user);
     setUserRole(role || "user");
-    if (branchId) {
+    
+    // Only set branch from login if no branch is already stored in localStorage
+    const storedBranchId = localStorage.getItem('menal_branch_id');
+    if (!storedBranchId && branchId) {
+      console.log('Setting branch from login (no manual selection found):', branchId);
       setCurrentBranchId(branchId);
+    } else if (storedBranchId) {
+      console.log('Keeping manually selected branch after login:', storedBranchId);
     }
+    
     navigate("/");
   };
 
@@ -140,6 +155,8 @@ function AppContent() {
         return <Customers />;
       case "customerManagement":
         return isAdmin ? <CustomerSegmentation onBack={() => navigate("/")} /> : <Dashboard isAdmin={isAdmin} />;
+      case "excel":
+        return isAdmin ? <ExcelUpload /> : <Dashboard isAdmin={isAdmin} />;
       default:
         return <Dashboard isAdmin={isAdmin} />;
     }
@@ -206,6 +223,7 @@ function AppContent() {
               userRole={userRole}
               onCustomerManagementClick={() => navigate("/customerManagement")}
               onExpensesClick={() => navigate("/expenses")}
+              onExcelClick={() => navigate("/excel")}
             />
           </div>
         </div>
@@ -226,6 +244,7 @@ function AppContent() {
           <Route path="/history" element={renderView("history")} />
           <Route path="/customers" element={renderView("customers")} />
           <Route path="/customerManagement" element={renderView("customerManagement")} />
+          <Route path="/excel" element={renderView("excel")} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>

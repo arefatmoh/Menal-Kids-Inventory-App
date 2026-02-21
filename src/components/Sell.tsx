@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Search, ShoppingCart, Trash2, Plus, Minus, DollarSign, Check } from 'lucide-react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -7,6 +7,16 @@ import { TierUpgradeCelebration } from './TierUpgradeCelebration';
 import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
+import { fetchCategories as fetchCategoriesUtil } from '../utils/categories';
+
+// Simple debounce function
+function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
+  let timeout: NodeJS.Timeout;
+  return ((...args: Parameters<T>) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func(...args), wait);
+  }) as T;
+}
 
 interface Product {
   id: string;
@@ -23,6 +33,8 @@ interface CartItem {
   price: number | string; // Allow string for empty input state
   originalPrice: number;
   stock: number;
+  hasDifferentPrices: boolean; // Flag to enable different prices mode
+  individualPrices: number[]; // Array of individual prices for each unit
 }
 
 interface Customer {
@@ -138,22 +150,25 @@ export function Sell() {
   };
 
   const fetchCategories = async () => {
-    const { data } = await supabase
-      .from('menal_product_categories')
-      .select('name')
-      .eq('branch_id', currentBranchId);
-
-    if (data) {
-      setCategories(['all', ...data.map(c => c.name)]);
+    if (!currentBranchId) return;
+    try {
+      const uniqueCategories = await fetchCategoriesUtil(currentBranchId);
+      setCategories(['all', ...uniqueCategories]);
+    } catch (error) {
+      console.error('Fetch categories error:', error);
     }
   };
 
+  // Debounced search function
+  const debouncedSearch = useRef(
+    debounce((category: string, search: string) => {
+      fetchProducts(0, category, search);
+    }, 300)
+  ).current;
+
   useEffect(() => {
     setPage(0);
-    const timer = setTimeout(() => {
-      fetchProducts(0, selectedCategory, searchQuery);
-    }, 300);
-    return () => clearTimeout(timer);
+    debouncedSearch(selectedCategory, searchQuery);
   }, [currentBranchId, selectedCategory, searchQuery]);
 
   const handleNextPage = () => {
@@ -178,7 +193,13 @@ export function Sell() {
       }
       setCart(cart.map(item =>
         item.productId === product.id
-          ? { ...item, quantity: item.quantity + 1 }
+          ? { 
+              ...item, 
+              quantity: item.quantity + 1,
+              // Reset different prices mode when quantity changes
+              hasDifferentPrices: false,
+              individualPrices: []
+            }
           : item
       ));
     } else {
@@ -189,6 +210,8 @@ export function Sell() {
         price: product.price,
         originalPrice: product.price,
         stock: product.stock,
+        hasDifferentPrices: false,
+        individualPrices: [product.price]
       }]);
     }
   };
@@ -202,7 +225,13 @@ export function Sell() {
           alert('Not enough stock available');
           return item;
         }
-        return { ...item, quantity: newQuantity };
+        return { 
+          ...item, 
+          quantity: newQuantity,
+          // Reset different prices mode when quantity changes
+          hasDifferentPrices: false,
+          individualPrices: []
+        };
       }
       return item;
     }));
@@ -241,10 +270,67 @@ export function Sell() {
     setCart(cart.filter(item => item.productId !== productId));
   };
 
-  const subtotal = cart.reduce((sum, item) => {
-    const price = typeof item.price === 'string' ? parseFloat(item.price) || 0 : item.price;
-    return sum + (price * item.quantity);
-  }, 0);
+  // Functions for different prices feature
+  const toggleDifferentPrices = (productId: string) => {
+    setCart(cart.map(item => {
+      if (item.productId === productId) {
+        if (item.hasDifferentPrices) {
+          // Turning off different prices mode - use average price
+          const avgPrice = item.individualPrices.reduce((sum, price) => sum + price, 0) / item.individualPrices.length;
+          return {
+            ...item,
+            hasDifferentPrices: false,
+            price: avgPrice,
+            individualPrices: []
+          };
+        } else {
+          // Turning on different prices mode - initialize with current price for all units
+          const currentPrice = typeof item.price === 'number' ? item.price : item.originalPrice;
+          return {
+            ...item,
+            hasDifferentPrices: true,
+            individualPrices: Array(item.quantity).fill(currentPrice)
+          };
+        }
+      }
+      return item;
+    }));
+  };
+
+  const updateIndividualPrice = (productId: string, unitIndex: number, newPrice: string) => {
+    if (newPrice === '') return;
+    
+    const price = parseFloat(newPrice);
+    if (isNaN(price) || price < 0) return;
+
+    setCart(cart.map(item => {
+      if (item.productId === productId && item.hasDifferentPrices) {
+        const newIndividualPrices = [...item.individualPrices];
+        newIndividualPrices[unitIndex] = price;
+        
+        // Calculate new average price
+        const avgPrice = newIndividualPrices.reduce((sum, price) => sum + price, 0) / newIndividualPrices.length;
+        
+        return {
+          ...item,
+          individualPrices: newIndividualPrices,
+          price: avgPrice
+        };
+      }
+      return item;
+    }));
+  };
+
+  const getTotalPrice = (item: CartItem) => {
+    if (item.hasDifferentPrices) {
+      return item.individualPrices.reduce((sum, price) => sum + price, 0);
+    } else {
+      const price = typeof item.price === 'number' ? item.price : parseFloat(item.price) || 0;
+      return price * item.quantity;
+    }
+  };
+
+  const subtotal = cart.reduce((sum, item) => sum + getTotalPrice(item), 0);
   const discountAmount = parseFloat(discount) || 0;
   const total = Math.max(0, subtotal - discountAmount);
 
@@ -307,10 +393,7 @@ export function Sell() {
       const generateId = () => `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
       // Calculate total
-      const subtotal = cart.reduce((sum, item) => {
-        const price = typeof item.price === 'string' ? parseFloat(item.price) || 0 : item.price;
-        return sum + (price * item.quantity);
-      }, 0);
+      const subtotal = cart.reduce((sum, item) => sum + getTotalPrice(item), 0);
       const finalTotal = Math.max(0, subtotal - discountAmount);
 
       // Handle customer creation if name and phone provided but not selected
@@ -402,14 +485,18 @@ export function Sell() {
 
       // Prepare items for RPC
       const rpcItems = cart.map(item => {
-        const price = typeof item.price === 'string' ? parseFloat(item.price) || 0 : item.price;
+        const totalPrice = getTotalPrice(item);
+        const averagePrice = totalPrice / item.quantity;
         return {
           productId: item.productId,
           productName: item.productName,
           quantity: item.quantity,
-          price: price,
-          originalPrice: price,
-          total: price * item.quantity
+          price: averagePrice,
+          originalPrice: item.originalPrice,
+          total: totalPrice,
+          // Add metadata for different prices
+          hasDifferentPrices: item.hasDifferentPrices,
+          individualPrices: item.individualPrices
         };
       });
 
@@ -595,7 +682,7 @@ export function Sell() {
                       </button>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: item.hasDifferentPrices ? '1fr' : '1fr 1fr', gap: '8px' }}>
                       <div>
                         <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
                           Quantity
@@ -621,26 +708,92 @@ export function Sell() {
                         </div>
                       </div>
 
-                      <div>
-                        <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                          Price (br)
-                        </label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={item.price}
-                          onChange={(e) => updatePrice(item.productId, e.target.value)}
-                          onBlur={() => handlePriceBlur(item.productId)}
-                          className="w-full px-2 py-1.5 rounded text-sm border-none outline-none"
-                          style={{ backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
-                        />
-                      </div>
+                      {/* Only show price field when different prices is NOT active */}
+                      {!item.hasDifferentPrices && (
+                        <div>
+                          <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                            Price (br)
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={item.price}
+                            onChange={(e) => updatePrice(item.productId, e.target.value)}
+                            onBlur={() => handlePriceBlur(item.productId)}
+                            className="w-full px-2 py-1.5 rounded text-sm border-none outline-none"
+                            style={{ backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
+                          />
+                        </div>
+                      )}
                     </div>
+
+                    {/* Different Prices Checkbox - Only show if quantity > 1 */}
+                    {item.quantity > 1 && (
+                      <div style={{ marginTop: '8px' }}>
+                        <label className="flex items-center gap-2 cursor-pointer text-xs" style={{ color: 'var(--text-primary)' }}>
+                          <input
+                            type="checkbox"
+                            checked={item.hasDifferentPrices}
+                            onChange={() => toggleDifferentPrices(item.productId)}
+                            className="rounded"
+                            style={{ accentColor: 'var(--primary)' }}
+                          />
+                          Different prices for each unit
+                        </label>
+                      </div>
+                    )}
+
+                    {/* Individual Price Inputs - Only show when different prices is enabled */}
+                    {item.hasDifferentPrices && (
+                      <div style={{ marginTop: '8px' }}>
+                        <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
+                          Individual Prices (br)
+                        </label>
+                        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(item.quantity, 3)}, 1fr)`, gap: '4px' }}>
+                          {item.individualPrices.map((price, index) => (
+                            <div key={index}>
+                              <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '2px' }}>
+                                Unit {index + 1}
+                              </label>
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={price}
+                                onChange={(e) => updateIndividualPrice(item.productId, index, e.target.value)}
+                                className="w-full px-1.5 py-1 rounded text-xs border-none outline-none"
+                                style={{ backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        {item.quantity > 3 && (
+                          <div style={{ marginTop: '8px', maxHeight: '120px', overflowY: 'auto' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(item.quantity - 3, 3)}, 1fr)`, gap: '4px' }}>
+                              {item.individualPrices.slice(3).map((price, index) => (
+                                <div key={index + 3}>
+                                  <label className="text-xs block" style={{ color: 'var(--text-secondary)', marginBottom: '2px' }}>
+                                    Unit {index + 4}
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={price}
+                                    onChange={(e) => updateIndividualPrice(item.productId, index + 3, e.target.value)}
+                                    className="w-full px-1.5 py-1 rounded text-xs border-none outline-none"
+                                    style={{ backgroundColor: 'var(--background)', color: 'var(--text-primary)' }}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid var(--border)' }} className="flex justify-between text-xs">
                       <span style={{ color: 'var(--text-secondary)' }}>Item Total:</span>
                       <span style={{ color: 'var(--text-primary)' }}>
-                        {Math.round((typeof item.price === 'string' ? parseFloat(item.price) || 0 : item.price) * item.quantity)} <span style={{ opacity: 0.7 }}>br</span>
+                        {Math.round(getTotalPrice(item))} <span style={{ opacity: 0.7 }}>br</span>
                       </span>
                     </div>
                   </div>
@@ -865,6 +1018,14 @@ export function Sell() {
 
               {/* Summary */}
               <div style={{ paddingTop: '10px', borderTop: '1px solid var(--border)', marginBottom: '10px' }}>
+                {cart.some(item => item.hasDifferentPrices) && (
+                  <div className="flex justify-between text-xs" style={{ marginBottom: '4px' }}>
+                    <span style={{ color: 'var(--text-secondary)' }}>💰 Custom Pricing:</span>
+                    <span style={{ color: 'var(--warning)' }}>
+                      {cart.filter(item => item.hasDifferentPrices).length} item(s)
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between text-xs" style={{ marginBottom: '4px' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Subtotal:</span>
                   <span style={{ color: 'var(--text-primary)' }}>{Math.round(subtotal)} <span style={{ opacity: 0.7 }}>br</span></span>
@@ -907,6 +1068,7 @@ export function Sell() {
             onChange={(e) => setSearchQuery(e.target.value)}
             className="flex-1 px-2 py-1.5 text-sm rounded border-none outline-none"
             style={{ backgroundColor: 'var(--gray-light)', color: 'var(--text-primary)' }}
+            key="sell-search-input"
           />
         </div>
       </div>

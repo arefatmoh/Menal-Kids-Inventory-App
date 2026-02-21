@@ -3,6 +3,7 @@ import { X, Package, Tag, DollarSign, Layers, Bell, FileText } from 'lucide-reac
 import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
+import { fetchCategories as fetchCategoriesUtil } from '../utils/categories';
 
 interface Product {
   id: string;
@@ -17,9 +18,10 @@ interface Product {
 interface ProductFormProps {
   product: Product | null;
   onClose: () => void;
+  onProductAdded?: () => void;
 }
 
-export function ProductForm({ product, onClose }: ProductFormProps) {
+export function ProductForm({ product, onClose, onProductAdded }: ProductFormProps) {
   const { currentBranchId } = useBranch();
   const [formData, setFormData] = useState({
     name: '',
@@ -40,26 +42,16 @@ export function ProductForm({ product, onClose }: ProductFormProps) {
   const fetchCategories = async () => {
     if (!currentBranchId) return;
     try {
-      // Fetch from the persistent categories table
-      const { data, error } = await supabase
-        .from('menal_product_categories')
-        .select('name')
-        .eq('branch_id', currentBranchId)
-        .order('name');
-
-      if (error) throw error;
-
-      // Map to array of strings
-      const catList = data.map(c => c.name);
-      setCategories(catList);
+      // Fetch categories using shared utility
+      const uniqueCategories = await fetchCategoriesUtil(currentBranchId);
+      setCategories(uniqueCategories);
 
       // If editing, ensure the product's category is in the list
-      if (product && !catList.includes(product.category)) {
+      if (product && !uniqueCategories.includes(product.category)) {
         setCategories(prev => [...prev, product.category].sort());
       }
     } catch (error) {
       console.error('Error fetching categories:', error);
-      // No fallback categories - exact user request
       setCategories([]);
     }
   };
@@ -139,6 +131,12 @@ export function ProductForm({ product, onClose }: ProductFormProps) {
       }
 
       toast.success(`Product ${product ? 'updated' : 'added'} successfully! 🎉`);
+      
+      // Refresh categories if this was a new product
+      if (!product && onProductAdded) {
+        onProductAdded();
+      }
+      
       onClose();
     } catch (error) {
       console.error('Save product error:', error);

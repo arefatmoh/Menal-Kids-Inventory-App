@@ -58,3 +58,19 @@ Desktop.ini
 
 # Debug
 *.log
+
+# Capacitor / Mobile build artifacts
+android/.gradle/
+android/.idea/
+android/local.properties
+android/app/build/
+android/captures/
+android/*.iml
+
+ios/DerivedData/
+ios/build/
+ios/**/xcuserdata/
+ios/**/xcshareddata/WorkspaceSettings.xcsettings
+
+# Capacitor config artifacts
+.capacitor/

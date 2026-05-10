@@ -1,21 +1,16 @@
-import { useEffect, useState, useRef } from 'react';
-import { Plus, Search, Edit, Trash2, Package, AlertTriangle, PlusCircle, MinusCircle, ChevronDown, ChevronUp, Calendar } from 'lucide-react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
+import { Plus, Search, Edit, Trash2, Package, AlertTriangle, PlusCircle, MinusCircle, ChevronDown, ChevronUp, Calendar, Printer } from 'lucide-react';
 import { ProductForm } from './ProductForm';
 import { StockAdjustment } from './StockAdjustment';
 import { LoadingSpinner } from './LoadingSpinner';
 import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
+import JsBarcode from 'jsbarcode';
 import { fetchCategories as fetchCategoriesUtil, addCategory } from '../utils/categories';
+import { findProductByBarcode } from '../utils/barcode';
 
-// Simple debounce function
-function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
-  let timeout: NodeJS.Timeout;
-  return ((...args: Parameters<T>) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func(...args), wait);
-  }) as T;
-}
+
 
 interface Product {
   id: string;
@@ -28,6 +23,29 @@ interface Product {
   createdAt: string;
   updatedAt: string;
   expiry_date?: string;
+  barcode?: string;
+}
+
+// Inline barcode renderer component
+function InlineBarcode({ value, width = 1.2, height = 32, fontSize = 10 }: { value: string; width?: number; height?: number; fontSize?: number }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  useEffect(() => {
+    if (svgRef.current && value) {
+      try {
+        JsBarcode(svgRef.current, value, {
+          format: 'CODE128',
+          width,
+          height,
+          displayValue: true,
+          fontSize,
+          margin: 2,
+          background: 'transparent',
+          lineColor: '#333333',
+        });
+      } catch (err) { /* ignore */ }
+    }
+  }, [value, width, height, fontSize]);
+  return <svg ref={svgRef} />;
 }
 
 interface ProductsProps {
@@ -36,8 +54,7 @@ interface ProductsProps {
 
 export function Products({ isAdmin }: ProductsProps) {
   const { currentBranchId } = useBranch();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]); // Full dataset in memory
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -52,42 +69,114 @@ export function Products({ isAdmin }: ProductsProps) {
   const [expiryExpanded, setExpiryExpanded] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
 
+  // Invisible barcode scanner listener
+  const scanBufferRef = useRef('');
+  const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scanLockRef = useRef(false);
+
   const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
   const PAGE_SIZE = 20;
 
-  /* 
-     Update: Moving filtering to server-side to ensure pagination works correctly 
-     with specific categories or search queries.
-  */
-  
-  const fetchProducts = async (pageNumber: number, category: string, search: string, reset = false) => {
-    // Only fetch if we have a branch ID
-    if (!currentBranchId) return;
+  // Client-side filtering — instant, no server calls
+  const filteredProducts = useMemo(() => {
+    let result = allProducts;
 
+    if (selectedCategory !== 'all') {
+      result = result.filter(p => p.category === selectedCategory);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      const paddedBarcode = q.padStart(5, '0');
+      result = result.filter(p =>
+        p.name.toLowerCase().includes(q) ||
+        (p.barcode && p.barcode === paddedBarcode)
+      );
+    }
+
+    return result;
+  }, [allProducts, selectedCategory, searchQuery]);
+
+  // Client-side pagination
+  const totalCount = filteredProducts.length;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+  const paginatedProducts = useMemo(() => {
+    const from = page * PAGE_SIZE;
+    return filteredProducts.slice(from, from + PAGE_SIZE);
+  }, [filteredProducts, page]);
+  const hasMore = (page + 1) * PAGE_SIZE < totalCount;
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [searchQuery, selectedCategory]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'Enter' && scanBufferRef.current.length >= 3) {
+        e.preventDefault();
+        const code = scanBufferRef.current;
+        scanBufferRef.current = '';
+        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+
+        if (!scanLockRef.current) {
+          scanLockRef.current = true;
+          (async () => {
+            try {
+              if (!currentBranchId) return;
+              const product = await findProductByBarcode(currentBranchId, code);
+              if (!product) {
+                toast.error(`No product matched barcode "${code}"`);
+                return;
+              }
+              // Set search to barcode so the product list filters to show it
+              setSearchQuery(product.barcode || code);
+              setSelectedCategory('all');
+              setSelectedProductId(product.id);
+              toast.success(`Found "${product.name}" — barcode ${code}`);
+              // Scroll to product after filter updates
+              setTimeout(() => {
+                const el = document.getElementById(`product-${product.id}`);
+                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }, 300);
+            } catch (err) {
+              console.error('Barcode scan error:', err);
+              toast.error('Failed to look up barcode');
+            } finally {
+              scanLockRef.current = false;
+            }
+          })();
+        }
+        return;
+      }
+
+      if (e.key.length === 1) {
+        scanBufferRef.current += e.key;
+        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+        scanTimerRef.current = setTimeout(() => {
+          scanBufferRef.current = '';
+        }, 100);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [currentBranchId]);
+
+  // Load ALL products once into memory
+  const fetchAllProducts = async () => {
+    if (!currentBranchId) return;
     setLoading(true);
     try {
-      const from = pageNumber * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-
-      let query = supabase
+      const { data, error } = await supabase
         .from('menal_products')
-        .select('*', { count: 'exact' }) // Get count for pagination
+        .select('*')
         .eq('branch_id', currentBranchId)
-        .not('name', 'like', '[Category Placeholder]%');
-
-      if (category !== 'all') {
-        query = query.eq('category', category);
-      }
-
-      if (search) {
-        query = query.ilike('name', `%${search}%`);
-      }
-
-      const { data, error, count } = await query
-        .order('created_at', { ascending: false })
-        .range(from, to);
+        .not('name', 'like', '[Category Placeholder]%')
+        .order('created_at', { ascending: false });
 
       if (error) {
         if (error.code === '42703' || error.code === '42P01') {
@@ -98,25 +187,7 @@ export function Products({ isAdmin }: ProductsProps) {
         throw error;
       }
 
-      const productsData = data || [];
-      const totalCountValue = count || 0;
-
-      if (reset) {
-        setProducts(productsData);
-        setFilteredProducts(productsData);
-      } else {
-        setProducts(prev => [...prev, ...productsData]);
-        setFilteredProducts(prev => [...prev, ...productsData]);
-      }
-
-      setTotalCount(totalCountValue);
-      setHasMore(productsData.length === PAGE_SIZE && (from + productsData.length) < totalCountValue);
-
-      // Fetch categories when we get products
-      if (productsData.length > 0 && categories.length <= 1) {
-        fetchCategories();
-      }
-
+      setAllProducts(data || []);
     } catch (error) {
       console.error('Products fetch error:', error);
       toast.error('Failed to load products');
@@ -125,29 +196,12 @@ export function Products({ isAdmin }: ProductsProps) {
     }
   };
 
-  // Debounced search function
-  const debouncedSearch = useRef(
-    debounce((category: string, search: string) => {
-      setPage(0);
-      setHasMore(true);
-      fetchProducts(0, category, search, true);
-    }, 300)
-  ).current;
-
-  useEffect(() => {
-    debouncedSearch(selectedCategory, searchQuery);
-  }, [selectedCategory, searchQuery]); // Remove debouncedSearch from dependencies
-
   // Initial load
   useEffect(() => {
     if (currentBranchId) {
-      fetchProducts(0, selectedCategory, searchQuery, true);
+      fetchAllProducts();
+      fetchCategories();
     }
-  }, [currentBranchId]);
-
-  // Initial categories fetch
-  useEffect(() => {
-    fetchCategories();
   }, [currentBranchId]);
 
   const handleDelete = async (id: string, name: string) => {
@@ -182,7 +236,7 @@ export function Products({ isAdmin }: ProductsProps) {
       if (error) throw error;
 
       toast.success('Product deleted successfully!');
-      fetchProducts(page, selectedCategory, searchQuery, false);
+      fetchAllProducts();
     } catch (error) {
       console.error('Delete product error:', error);
       toast.error('Failed to delete product');
@@ -229,10 +283,7 @@ export function Products({ isAdmin }: ProductsProps) {
 
     toast.success(`Category "${categoryName}" added successfully`);
     fetchCategories(); // Refresh categories
-    // Refresh products safely (reset=true) to avoid appending duplicates that cause duplicate React keys
-    setPage(0);
-    setHasMore(true);
-    fetchProducts(0, selectedCategory, searchQuery, true);
+    fetchAllProducts();
   };
 
   const handleEdit = (product: Product) => {
@@ -260,11 +311,11 @@ export function Products({ isAdmin }: ProductsProps) {
     setAdjustingProduct(null);
   };
 
-  const lowStockProducts = products.filter(p => p.stock <= p.minStock && p.stock > 0);
+  const lowStockProducts = allProducts.filter(p => p.stock <= p.minStock && p.stock > 0);
 
   // Calculate expiring products
   const now = new Date();
-  const expiringProducts = products.filter(p => p.expiry_date)
+  const expiringProducts = allProducts.filter(p => p.expiry_date)
     .map(p => ({
       ...p,
       daysUntilExpiry: Math.ceil((new Date(p.expiry_date!).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
@@ -282,23 +333,25 @@ export function Products({ isAdmin }: ProductsProps) {
       <div className="flex items-center justify-between" style={{ marginBottom: '20px' }}>
         <h2 style={{ color: 'var(--text-primary)' }}>Products</h2>
 
-        {/* Floating Add Button - All Users */}
-        <button
-          onClick={() => setShowForm(true)}
-          className="flex items-center justify-center rounded-full shadow-lg transition-all active:scale-95 hover:scale-110"
-          style={{
-            width: '56px',
-            height: '56px',
-            backgroundColor: 'var(--primary)',
-            color: '#FFFFFF',
-            boxShadow: '0 8px 24px rgba(113, 67, 41, 0.3)',
-            border: 'none',
-            cursor: 'pointer'
-          }}
-          aria-label="Add Product"
-        >
-          <Plus size={28} strokeWidth={2.5} />
-        </button>
+        {/* Floating Add Button - Admins Only */}
+        {isAdmin && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="flex items-center justify-center rounded-full shadow-lg transition-all active:scale-95 hover:scale-110"
+            style={{
+              width: '56px',
+              height: '56px',
+              backgroundColor: 'var(--primary)',
+              color: '#FFFFFF',
+              boxShadow: '0 8px 24px rgba(113, 67, 41, 0.3)',
+              border: 'none',
+              cursor: 'pointer'
+            }}
+            aria-label="Add Product"
+          >
+            <Plus size={28} strokeWidth={2.5} />
+          </button>
+        )}
       </div>
 
       {/* Low Stock Alert */}
@@ -424,18 +477,20 @@ export function Products({ isAdmin }: ProductsProps) {
               {cat}
             </button>
           ))}
-          <button
-            onClick={() => setShowAddCategory(true)}
-            className="px-4 py-2 rounded-lg transition-all text-sm flex items-center gap-1"
-            style={{
-              backgroundColor: 'var(--secondary)',
-              color: 'var(--primary)',
-              border: '1px dashed var(--primary)',
-            }}
-          >
-            <Plus size={16} />
-            Add Category
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddCategory(true)}
+              className="px-4 py-2 rounded-lg transition-all text-sm flex items-center gap-1"
+              style={{
+                backgroundColor: 'var(--secondary)',
+                color: 'var(--primary)',
+                border: '1px dashed var(--primary)',
+              }}
+            >
+              <Plus size={16} />
+              Add Category
+            </button>
+          )}
         </div>
       </div>
 
@@ -487,12 +542,13 @@ export function Products({ isAdmin }: ProductsProps) {
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {filteredProducts.map((product) => {
+          {paginatedProducts.map((product) => {
             const isExpanded = selectedProductId === product.id;
 
             return (
               <div
                 key={`product-${product.id}`}
+                id={`product-${product.id}`}
                 onClick={() => setSelectedProductId(isExpanded ? null : product.id)}
                 className="rounded-xl shadow-sm border transition-all cursor-pointer hover:shadow-md"
                 style={{
@@ -515,10 +571,30 @@ export function Products({ isAdmin }: ProductsProps) {
                   <div style={{ flex: '1 1 0', minWidth: 0 }}>
                     <h4 className="text-sm" style={{
                       color: 'var(--text-primary)',
-                      whiteSpace: 'nowrap',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
                       overflow: 'hidden',
-                      textOverflow: 'ellipsis'
+                      wordBreak: 'break-word',
+                      lineHeight: '1.4'
                     }}>
+                      {product.barcode && (
+                        <span
+                          className="text-xs"
+                          style={{
+                            backgroundColor: 'var(--primary)',
+                            color: '#FFFFFF',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            marginRight: '6px',
+                            fontFamily: 'monospace',
+                            fontSize: '10px',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {product.barcode}
+                        </span>
+                      )}
                       {product.name}
                     </h4>
                     <p className="text-xs capitalize" style={{ color: 'var(--text-secondary)' }}>
@@ -571,6 +647,103 @@ export function Products({ isAdmin }: ProductsProps) {
                     }}
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {/* Barcode Display */}
+                    {product.barcode && (
+                      <div
+                        className="rounded-lg flex items-center justify-between"
+                        style={{
+                          backgroundColor: 'var(--gray-light)',
+                          padding: '10px 12px',
+                          marginBottom: '16px',
+                        }}
+                      >
+                        <div style={{ flex: 1, textAlign: 'center' }}>
+                          <InlineBarcode value={product.barcode} />
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const printWindow = window.open('', '_blank', 'width=800,height=600');
+                            if (printWindow) {
+                              // Fill A4 page: 5 cols × 17 rows = 85 labels
+                              const totalLabels = 85;
+                              const labels = Array(totalLabels).fill(null).map(() => `
+                                <div class="label">
+                                  <svg class="barcode" data-value="${product.barcode}"></svg>
+                                </div>
+                              `).join('');
+
+                              printWindow.document.write(`
+                                <!DOCTYPE html>
+                                <html>
+                                <head>
+                                  <title>Barcode Labels - ${product.barcode}</title>
+                                  <style>
+                                    * { margin: 0; padding: 0; box-sizing: border-box; }
+                                    @page { size: A4; margin: 2mm; }
+                                    body { font-family: 'Segoe UI', Arial, sans-serif; background: #fff; }
+                                    .grid {
+                                      display: grid;
+                                      grid-template-columns: repeat(5, 1fr);
+                                      gap: 1mm;
+                                      padding: 1mm;
+                                    }
+                                    .label {
+                                      border: 0.3px dashed #ccc;
+                                      padding: 1mm;
+                                      text-align: center;
+                                      display: flex;
+                                      align-items: center;
+                                      justify-content: center;
+                                      page-break-inside: avoid;
+                                      min-height: 16mm;
+                                    }
+                                    .label svg { max-width: 100%; height: auto; }
+                                    @media print {
+                                      body { -webkit-print-color-adjust: exact; margin: 0; padding: 0; }
+                                      .label { border-color: #ddd; }
+                                      .no-print { display: none !important; }
+                                    }
+                                    .no-print { text-align: center; padding: 16px; background: #f5f5f5; border-bottom: 1px solid #ddd; }
+                                    .no-print button { padding: 10px 24px; background: #714329; color: white; border: none; border-radius: 8px; font-size: 14px; cursor: pointer; margin: 0 8px; }
+                                    .no-print button:hover { opacity: 0.9; }
+                                    .no-print .info { font-size: 13px; color: #666; margin-top: 8px; }
+                                  </style>
+                                </head>
+                                <body>
+                                  <div class="no-print">
+                                    <button onclick="window.print()">🖨️ Print Labels</button>
+                                    <button onclick="window.close()" style="background:#888">Close</button>
+                                    <div class="info">${totalLabels} labels of barcode ${product.barcode} • 5 per row</div>
+                                  </div>
+                                  <div class="grid">${labels}</div>
+                                  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+                                  <script>
+                                    document.querySelectorAll('.barcode').forEach(function(svg) {
+                                      var value = svg.getAttribute('data-value');
+                                      if (value) {
+                                        JsBarcode(svg, value, {
+                                          format: 'CODE128', width: 1.2, height: 28, displayValue: true,
+                                          fontSize: 10, margin: 0, background: 'transparent',
+                                          lineColor: '#000000', textMargin: 0
+                                        });
+                                      }
+                                    });
+                                  </script>
+                                </body>
+                                </html>
+                              `);
+                              printWindow.document.close();
+                            }
+                          }}
+                          className="p-2 rounded-lg transition-all active:scale-95 flex-shrink-0"
+                          style={{ backgroundColor: 'var(--primary)', color: '#FFFFFF', border: 'none', marginLeft: '12px' }}
+                          title="Print Barcode Page"
+                        >
+                          <Printer size={16} />
+                        </button>
+                      </div>
+                    )}
                     {/* Notes/Description */}
                     {product.notes && (
                       <div
@@ -587,78 +760,80 @@ export function Products({ isAdmin }: ProductsProps) {
                       </div>
                     )}
 
-                    {/* Action Buttons - All Users */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleEdit(product);
-                        }}
-                        className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
-                        style={{
-                          backgroundColor: 'var(--primary)',
-                          color: '#FFFFFF',
-                          padding: '10px',
-                          border: 'none'
-                        }}
-                      >
-                        <Edit size={16} />
-                        <span className="text-sm">Edit</span>
-                      </button>
+                    {/* Action Buttons - Admins Only */}
+                    {isAdmin && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEdit(product);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
+                          style={{
+                            backgroundColor: 'var(--primary)',
+                            color: '#FFFFFF',
+                            padding: '10px',
+                            border: 'none'
+                          }}
+                        >
+                          <Edit size={16} />
+                          <span className="text-sm">Edit</span>
+                        </button>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDelete(product.id, product.name);
-                        }}
-                        className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
-                        style={{
-                          backgroundColor: 'var(--gray-light)',
-                          color: 'var(--danger)',
-                          padding: '10px',
-                          border: '1px solid var(--border)'
-                        }}
-                      >
-                        <Trash2 size={16} />
-                        <span className="text-sm">Delete</span>
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(product.id, product.name);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
+                          style={{
+                            backgroundColor: 'var(--gray-light)',
+                            color: 'var(--danger)',
+                            padding: '10px',
+                            border: '1px solid var(--border)'
+                          }}
+                        >
+                          <Trash2 size={16} />
+                          <span className="text-sm">Delete</span>
+                        </button>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAdjustingProduct({ ...product, adjustmentType: 'add' } as any);
-                          setShowStockAdjustment(true);
-                        }}
-                        className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
-                        style={{
-                          backgroundColor: 'var(--success)',
-                          color: '#FFFFFF',
-                          padding: '10px',
-                          border: 'none'
-                        }}
-                      >
-                        <PlusCircle size={16} />
-                        <span className="text-sm">Add Stock</span>
-                      </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAdjustingProduct({ ...product, adjustmentType: 'add' } as any);
+                            setShowStockAdjustment(true);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
+                          style={{
+                            backgroundColor: 'var(--success)',
+                            color: '#FFFFFF',
+                            padding: '10px',
+                            border: 'none'
+                          }}
+                        >
+                          <PlusCircle size={16} />
+                          <span className="text-sm">Add Stock</span>
+                        </button>
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setAdjustingProduct({ ...product, adjustmentType: 'remove' } as any);
-                          setShowStockAdjustment(true);
-                        }}
-                        className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
-                        style={{
-                          backgroundColor: 'var(--danger)',
-                          color: '#FFFFFF',
-                          padding: '10px',
-                          border: 'none'
-                        }}
-                      >
-                        <MinusCircle size={16} />
-                        <span className="text-sm">Remove</span>
-                      </button>
-                    </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setAdjustingProduct({ ...product, adjustmentType: 'remove' } as any);
+                            setShowStockAdjustment(true);
+                          }}
+                          className="flex items-center justify-center gap-2 rounded-lg transition-all active:scale-95"
+                          style={{
+                            backgroundColor: 'var(--danger)',
+                            color: '#FFFFFF',
+                            padding: '10px',
+                            border: 'none'
+                          }}
+                        >
+                          <MinusCircle size={16} />
+                          <span className="text-sm">Remove</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -670,33 +845,25 @@ export function Products({ isAdmin }: ProductsProps) {
       {/* Pagination Controls */}
       <div className="flex flex-col items-center gap-4 mt-8 pt-6 border-t" style={{ borderColor: 'var(--border)' }}>
         <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-          Showing {Math.min(totalCount, page * PAGE_SIZE + 1)}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
+          Showing {totalCount === 0 ? 0 : page * PAGE_SIZE + 1}-{Math.min((page + 1) * PAGE_SIZE, totalCount)} of {totalCount}
         </div>
 
         <div className="flex items-center gap-6">
           <button
-            onClick={() => {
-              const prevPage = Math.max(0, page - 1);
-              setPage(prevPage);
-              fetchProducts(prevPage, selectedCategory, searchQuery);
-            }}
-            disabled={page === 0 || loading}
+            onClick={() => setPage(prev => Math.max(0, prev - 1))}
+            disabled={page === 0}
             className="pagination-btn"
           >
             Previous
           </button>
 
           <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-            Page {page + 1} of {Math.ceil(totalCount / PAGE_SIZE) || 1}
+            Page {page + 1} of {totalPages}
           </span>
 
           <button
-            onClick={() => {
-              const nextPage = page + 1;
-              setPage(nextPage);
-              fetchProducts(nextPage, selectedCategory, searchQuery);
-            }}
-            disabled={!hasMore || loading}
+            onClick={() => setPage(prev => prev + 1)}
+            disabled={!hasMore}
             className="pagination-btn"
           >
             Next
@@ -709,7 +876,7 @@ export function Products({ isAdmin }: ProductsProps) {
         <ProductForm
           product={editingProduct}
           onClose={handleFormClose}
-          onProductAdded={fetchCategories}
+          onProductAdded={() => { fetchCategories(); fetchAllProducts(); }}
         />
       )}
 
@@ -718,6 +885,9 @@ export function Products({ isAdmin }: ProductsProps) {
         <StockAdjustment
           product={adjustingProduct}
           onClose={handleStockAdjustmentClose}
+          onSuccess={() => {
+            fetchAllProducts();
+          }}
         />
       )}
     </div>

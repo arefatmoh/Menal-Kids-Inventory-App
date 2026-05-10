@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
 import { fetchCategories as fetchCategoriesUtil } from '../utils/categories';
+import { generateNextBarcode } from '../utils/barcode';
 
 interface Product {
   id: string;
@@ -111,11 +112,12 @@ export function ProductForm({ product, onClose, onProductAdded }: ProductFormPro
           metadata: { ...productData, productName: formData.name },
         });
       } else {
-        // Create new product with ID
+        // Create new product with ID and auto-generated barcode
         const newProductId = generateId();
+        const barcode = await generateNextBarcode(currentBranchId!);
         const { error } = await supabase
           .from('menal_products')
-          .insert({ ...productData, id: newProductId });
+          .insert({ ...productData, id: newProductId, barcode });
 
         if (error) throw error;
 
@@ -125,8 +127,8 @@ export function ProductForm({ product, onClose, onProductAdded }: ProductFormPro
           type: 'product_created',
           product_id: newProductId,
           branch_id: currentBranchId,
-          details: `Product "${formData.name}" created with stock: ${formData.stock}`,
-          metadata: { ...productData, stock: parseInt(formData.stock), productName: formData.name },
+          details: `Product "${formData.name}" created with stock: ${formData.stock}, barcode: ${barcode}`,
+          metadata: { ...productData, stock: parseInt(formData.stock), productName: formData.name, barcode },
         });
       }
 

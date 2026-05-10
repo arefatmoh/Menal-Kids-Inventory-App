@@ -235,11 +235,16 @@ export function NotificationBell({ username, userRole = 'admin' }: NotificationB
           setActivityNotifs(prev => [notif, ...prev].slice(0, 30));
 
           if (isAdmin && type === 'sale') {
-            const total = entry.metadata?.total || entry.metadata?.final_total || 0;
+            const total = entry.metadata?.finalTotal || entry.metadata?.total || entry.metadata?.final_total || 0;
             const by = entry.metadata?.cashier || entry.metadata?.username || 'Staff';
-            toast(`💰 Sale: ${Math.round(total)} br by ${by}`, { duration: 3000 });
+            const items = entry.metadata?.items || [];
+            const productNames = items.slice(0, 2).map((item: any) => item.productName || item.product_name).join(', ');
+            const suffix = items.length > 2 ? '...' : '';
+            const title = items.length > 0 ? `${productNames}${suffix}` : 'Items';
+            
+            toast(`💰 Sale: ${Math.round(total)} br (${title}) by ${by}`, { duration: 4000 });
             if (salesEnabled) {
-              fireDeviceNotification('New Sale 💰', `${Math.round(total)} br by ${by}`);
+              fireDeviceNotification(`New Sale: ${Math.round(total)} br 💰`, `${title} sold by ${by}`);
             }
           } else if (!isAdmin) {
             // Staff: product/stock — toast + system notification
@@ -517,7 +522,14 @@ export function NotificationBell({ username, userRole = 'admin' }: NotificationB
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
                           {notif.type === 'sale'
-                            ? `Sale: ${Math.round(notif.metadata?.total || notif.metadata?.final_total || 0)} br`
+                            ? (() => {
+                                const total = notif.metadata?.finalTotal || notif.metadata?.total || notif.metadata?.final_total || 0;
+                                const items = notif.metadata?.items || [];
+                                const productNames = items.slice(0, 2).map((item: any) => item.productName || item.product_name).join(', ');
+                                const suffix = items.length > 2 ? '...' : '';
+                                const title = items.length > 0 ? ` (${productNames}${suffix})` : '';
+                                return `Sale: ${Math.round(total)} br${title}`;
+                              })()
                             : notif.type === 'product_created'
                               ? (notif.metadata?.name || 'New Product')
                               : (notif.metadata?.product_name || 'Stock Updated')}

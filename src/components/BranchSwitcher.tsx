@@ -5,7 +5,7 @@ import { useBranch } from '../context/BranchContext';
 export function BranchSwitcher() {
     const { branches, currentBranchId, setCurrentBranchId, currentBranch } = useBranch();
 
-    if (branches.length <= 1) return null;
+    if (branches.length === 0) return null;
 
     return (
         <div className="relative inline-block text-left">

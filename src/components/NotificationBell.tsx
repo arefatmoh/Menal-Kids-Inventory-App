@@ -58,7 +58,7 @@ interface NotificationBellProps {
 }
 
 export function NotificationBell({ username, userRole = 'admin' }: NotificationBellProps) {
-  const { currentBranchId } = useBranch();
+  const { currentBranchId, currentBranch } = useBranch();
   const [requests, setRequests] = useState<ReturnRequest[]>([]);
   const [activityNotifs, setActivityNotifs] = useState<any[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -236,7 +236,7 @@ export function NotificationBell({ username, userRole = 'admin' }: NotificationB
 
           if (isAdmin && type === 'sale') {
             const total = entry.metadata?.finalTotal || entry.metadata?.total || entry.metadata?.final_total || 0;
-            const by = entry.metadata?.cashier || entry.metadata?.username || 'Staff';
+            const by = entry.metadata?.cashier || entry.metadata?.username || currentBranch?.name || 'Staff';
             const items = entry.metadata?.items || [];
             const productNames = items.slice(0, 2).map((item: any) => item.productName || item.product_name).join(', ');
             const suffix = items.length > 2 ? '...' : '';
@@ -536,7 +536,7 @@ export function NotificationBell({ username, userRole = 'admin' }: NotificationB
                         </p>
                         <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                           {notif.type === 'sale'
-                            ? `by ${notif.metadata?.cashier || notif.metadata?.username || 'Staff'}`
+                            ? `by ${notif.metadata?.cashier || notif.metadata?.username || currentBranch?.name || 'Staff'}`
                             : notif.details}
                         </p>
                         <span className="text-xs flex items-center gap-1 mt-1" style={{ color: 'var(--text-secondary)' }}>

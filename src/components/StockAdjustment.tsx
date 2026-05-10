@@ -13,9 +13,10 @@ interface Product {
 interface StockAdjustmentProps {
   product: Product;
   onClose: () => void;
+  onSuccess?: () => void;
 }
 
-export function StockAdjustment({ product, onClose }: StockAdjustmentProps) {
+export function StockAdjustment({ product, onClose, onSuccess }: StockAdjustmentProps) {
   const [quantity, setQuantity] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
@@ -46,6 +47,7 @@ export function StockAdjustment({ product, onClose }: StockAdjustmentProps) {
       if (error) throw error;
 
       toast.success(`Stock ${isAdding ? 'added' : 'removed'} successfully!`);
+      if (onSuccess) onSuccess();
       onClose();
     } catch (error) {
       console.error('Adjust stock error:', error);
@@ -104,17 +106,16 @@ export function StockAdjustment({ product, onClose }: StockAdjustmentProps) {
               className="rounded-xl"
               style={{
                 backgroundColor: 'var(--secondary)',
-                opacity: 0.3,
                 padding: '16px'
               }}
             >
-              <p className="text-sm" style={{ color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.7)', marginBottom: '4px' }}>
                 Product
               </p>
-              <p style={{ color: 'var(--text-primary)', marginBottom: '8px' }}>
+              <p style={{ color: '#FFFFFF', marginBottom: '8px', fontWeight: 'bold' }}>
                 {product.name}
               </p>
-              <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <p className="text-sm" style={{ color: 'rgba(255, 255, 255, 0.9)' }}>
                 Current Stock: {product.stock} units
               </p>
             </div>

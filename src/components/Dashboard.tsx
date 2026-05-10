@@ -74,7 +74,7 @@ interface ActivityEntry {
   metadata: any;
 }
 
-type DateRange = 'today' | 'week' | '2weeks' | 'month' | 'year';
+type DateRange = 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'custom';
 
 interface DashboardProps {
   isAdmin: boolean;
@@ -85,6 +85,8 @@ export function Dashboard({ isAdmin }: DashboardProps) {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>('today');
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
   const [recentActivities, setRecentActivities] = useState<ActivityEntry[]>([]);
   const [activityPage, setActivityPage] = useState(0);
   const [hasMoreActivities, setHasMoreActivities] = useState(true);
@@ -96,32 +98,48 @@ export function Dashboard({ isAdmin }: DashboardProps) {
   const [detailData, setDetailData] = useState<SalesDetail[] | ExpenseDetail[] | StockDetail[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
+  const getDateRangeBounds = () => {
+    const now = new Date();
+    let startDate: Date;
+    let endDate: Date = new Date();
+
+    switch (dateRange) {
+      case 'today':
+        startDate = new Date(now.setHours(0, 0, 0, 0));
+        break;
+      case 'yesterday':
+        startDate = new Date(now);
+        startDate.setDate(startDate.getDate() - 1);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(startDate);
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      case 'week':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
+      case 'month':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        break;
+      case 'year':
+        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      case 'custom':
+        startDate = customStartDate ? new Date(customStartDate) : new Date(now.setHours(0, 0, 0, 0));
+        endDate = customEndDate ? new Date(customEndDate) : new Date();
+        endDate.setHours(23, 59, 59, 999);
+        break;
+      default:
+        startDate = new Date(now.setHours(0, 0, 0, 0));
+    }
+    return { startDate, endDate };
+  };
+
   const fetchDashboard = async () => {
     if (!currentBranchId) return;
     setLoading(true);
     try {
-      const now = new Date();
-      let startDate: Date;
+      const { startDate, endDate } = getDateRangeBounds();
 
-      switch (dateRange) {
-        case 'today':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          break;
-        case 'week':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '2weeks':
-          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-      }
 
       // Fetch sales data
       const { data: salesData, error: salesError } = await supabase
@@ -129,6 +147,7 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         .select('*, menal_sale_items(*)')
         .eq('branch_id', currentBranchId)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .eq('is_reversed', false);
 
       if (salesError) {
@@ -145,7 +164,8 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         .from('menal_expenses')
         .select('*')
         .eq('branch_id', currentBranchId)
-        .gte('created_at', startDate.toISOString());
+        .gte('date', startDate.toISOString())
+        .lte('date', endDate.toISOString());
 
       if (expensesError) throw expensesError;
 
@@ -255,34 +275,14 @@ export function Dashboard({ isAdmin }: DashboardProps) {
     if (!currentBranchId) return;
     setDetailLoading(true);
     try {
-      const now = new Date();
-      let startDate: Date;
-
-      switch (dateRange) {
-        case 'today':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          break;
-        case 'week':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '2weeks':
-          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-      }
+      const { startDate, endDate } = getDateRangeBounds();
 
       const { data, error } = await supabase
         .from('menal_sales')
         .select('*, menal_sale_items(*)')
         .eq('branch_id', currentBranchId)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .eq('is_reversed', false)
         .order('created_at', { ascending: false });
 
@@ -314,34 +314,14 @@ export function Dashboard({ isAdmin }: DashboardProps) {
     if (!currentBranchId) return;
     setDetailLoading(true);
     try {
-      const now = new Date();
-      let startDate: Date;
-
-      switch (dateRange) {
-        case 'today':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          break;
-        case 'week':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '2weeks':
-          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-      }
+      const { startDate, endDate } = getDateRangeBounds();
 
       const { data, error } = await supabase
         .from('menal_sales')
         .select('*, menal_sale_items(*)')
         .eq('branch_id', currentBranchId)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .eq('is_reversed', false)
         .order('created_at', { ascending: false });
 
@@ -379,34 +359,14 @@ export function Dashboard({ isAdmin }: DashboardProps) {
     if (!currentBranchId) return;
     setDetailLoading(true);
     try {
-      const now = new Date();
-      let startDate: Date;
-
-      switch (dateRange) {
-        case 'today':
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-          break;
-        case 'week':
-          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-          break;
-        case '2weeks':
-          startDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-          break;
-        case 'month':
-          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-          break;
-        case 'year':
-          startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
-          break;
-        default:
-          startDate = new Date(now.setHours(0, 0, 0, 0));
-      }
+      const { startDate, endDate } = getDateRangeBounds();
 
       const { data, error } = await supabase
         .from('menal_expenses')
         .select('*')
         .eq('branch_id', currentBranchId)
         .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -463,6 +423,7 @@ export function Dashboard({ isAdmin }: DashboardProps) {
   const fetchRecentActivities = async (page = 0) => {
     if (!currentBranchId) return;
     try {
+      const { startDate, endDate } = getDateRangeBounds();
       const from = page * ACTIVITY_PAGE_SIZE;
       const to = from + ACTIVITY_PAGE_SIZE - 1;
 
@@ -470,6 +431,8 @@ export function Dashboard({ isAdmin }: DashboardProps) {
         .from('menal_activity_log')
         .select('*', { count: 'exact' })
         .eq('branch_id', currentBranchId)
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
         .order('created_at', { ascending: false })
         .range(from, to);
 
@@ -507,7 +470,7 @@ export function Dashboard({ isAdmin }: DashboardProps) {
     fetchDashboard();
     setActivityPage(0);
     fetchRecentActivities(0);
-  }, [dateRange, currentBranchId]);
+  }, [dateRange, currentBranchId, customStartDate, customEndDate]);
 
   const handleNextActivityPage = () => {
     const nextPage = activityPage + 1;
@@ -535,22 +498,23 @@ export function Dashboard({ isAdmin }: DashboardProps) {
 
   const dateRangeLabels: Record<DateRange, string> = {
     today: 'Today',
+    yesterday: 'Yesterday',
     week: 'Week',
-    '2weeks': '2 Weeks',
     month: 'Month',
     year: 'Year',
+    custom: 'Custom'
   };
 
   return (
-    <div>
+    <div className="flex flex-col min-w-0 overflow-x-hidden pb-8 w-full">
       {/* Welcome Header */}
       <div style={{ marginBottom: '20px' }}>
         <h2 style={{ color: 'var(--text-primary)' }}>Dashboard</h2>
       </div>
 
       {/* Date Range Selector */}
-      <div style={{ marginBottom: '24px' }}>
-        <div className="flex gap-3 overflow-x-auto pb-2">
+      <div style={{ marginBottom: '24px', width: '100%', maxWidth: '100%' }}>
+        <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-hide" style={{ WebkitOverflowScrolling: 'touch' }}>
           {(Object.keys(dateRangeLabels) as DateRange[]).map((range) => (
             <button
               key={range}
@@ -566,15 +530,35 @@ export function Dashboard({ isAdmin }: DashboardProps) {
             </button>
           ))}
         </div>
+        
+        {dateRange === 'custom' && (
+          <div className="flex gap-2 mt-3 items-center">
+            <input
+              type="date"
+              value={customStartDate}
+              onChange={(e) => setCustomStartDate(e.target.value)}
+              className="rounded-lg border px-3 py-1.5 text-sm"
+              style={{ backgroundColor: 'var(--gray-light)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            />
+            <span style={{ color: 'var(--text-secondary)' }}>to</span>
+            <input
+              type="date"
+              value={customEndDate}
+              onChange={(e) => setCustomEndDate(e.target.value)}
+              className="rounded-lg border px-3 py-1.5 text-sm"
+              style={{ backgroundColor: 'var(--gray-light)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Main Profit Card - Reduced */}
-      {isAdmin && (
-        <div
-          className="rounded-2xl shadow-sm"
+      {/* Main Profit Card - Visible to all users */}
+      <div
+        className="rounded-2xl shadow-sm w-full"
           style={{
             backgroundColor: data.netProfit >= 0 ? 'var(--success)' : 'var(--danger)',
-            padding: '20px',
+            padding: '16px',
             marginBottom: '16px'
           }}
         >
@@ -584,7 +568,6 @@ export function Dashboard({ isAdmin }: DashboardProps) {
             {data.netProfit >= 0 ? 'Keep it up!' : 'Check expenses'}
           </p>
         </div>
-      )}
 
       {/* Sales & Expenses - Reduced Height */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
@@ -864,26 +847,26 @@ export function Dashboard({ isAdmin }: DashboardProps) {
       {/* Recent Activities */}
       {recentActivities.length > 0 && (
         <div
-          className="rounded-2xl shadow-sm border"
+          className="rounded-2xl shadow-sm border w-full overflow-hidden"
           style={{
             backgroundColor: 'var(--background)',
             borderColor: 'var(--border)',
-            padding: '24px'
+            padding: '16px'
           }}
         >
           <div className="flex items-center gap-2" style={{ marginBottom: '16px' }}>
             <Clock size={20} style={{ color: 'var(--primary)' }} />
-            <h3 style={{ color: 'var(--text-primary)' }}>Recent Activities</h3>
+            <h3 className="text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>Recent Activities</h3>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="flex flex-col gap-3">
             {recentActivities.map((activity) => {
               const isSale = activity.type === 'sale';
 
               return (
                 <div
                   key={activity.id}
-                  className="flex items-start rounded-xl p-4 transition-all hover:bg-gray-50 border border-transparent hover:border-gray-200"
-                  style={{ backgroundColor: 'var(--gray-light)', gap: '12px' }}
+                  className="flex items-start rounded-xl p-3 transition-all hover:bg-gray-50 border border-transparent hover:border-gray-200"
+                  style={{ backgroundColor: 'var(--gray-light)', gap: '10px' }}
                 >
                   <div
                     className={`rounded-full flex items-center justify-center flex-shrink-0 ${isSale ? 'bg-green-100' : 'bg-blue-100'}`}
@@ -896,35 +879,40 @@ export function Dashboard({ isAdmin }: DashboardProps) {
                     {isSale ? <ShoppingBag size={20} /> : <Package size={20} />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <p className="font-medium capitalize" style={{ color: 'var(--text-primary)' }}>
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium capitalize text-sm truncate" style={{ color: 'var(--text-primary)' }}>
                           {isSale
                             ? (() => {
                               const items = activity.metadata?.items || [];
-                              const names = items.slice(0, 3).map((item: any) => item.productName);
+                              const names = items.slice(0, 2).map((item: any) => item.productName);
                               let title = names.join(', ');
-                              if (items.length > 3) title += '...';
+                              if (items.length > 2) title += '...';
                               return `Sale: ${title || 'Items'} (${Math.round(activity.metadata?.finalTotal || 0)})`;
                             })()
-                            : activity.type.replace('_', ' ')}
+                            : activity.type === 'stock_adjustment'
+                              ? 'Stock Adjustment'
+                              : activity.type.replace('_', ' ')}
                         </p>
-                        <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>
+                        <p className="text-xs mt-0.5 opacity-70 truncate" style={{ color: 'var(--text-secondary)' }}>
                           {isSale && activity.metadata?.items
                             ? (() => {
                               const itemCount = (activity.metadata.items as any[]).reduce((sum, item) => sum + (item.quantity || 0), 0);
                               const methods = [];
                               const details = activity.metadata.paymentDetails;
                               if (details) {
-                                if (details.cash > 0) methods.push(`Cash(${Math.round(details.cash)})`);
-                                if (details.bank > 0) methods.push(`Bank(${Math.round(details.bank)})`);
-                                if (details.telebirr > 0) methods.push(`Telebirr(${Math.round(details.telebirr)})`);
+                                if (details.cash > 0) methods.push(`Cash`);
+                                if (details.bank > 0) methods.push(`Bank`);
+                                if (details.telebirr > 0) methods.push(`Tele`);
                               }
-
-                              const paymentLabel = methods.length > 0 ? methods.join(' + ') : (activity.metadata.paymentMethod || 'Cash');
+                              const paymentLabel = methods.length > 0 ? methods.join('+') : (activity.metadata.paymentMethod || 'Cash');
                               return `${itemCount} items • ${paymentLabel}`;
                             })()
-                            : activity.details}
+                            : activity.type === 'stock_adjustment' && activity.metadata?.product_name
+                              ? `${activity.metadata.product_name}: ${activity.metadata.amount > 0 ? '+' : ''}${activity.metadata.amount}`
+                              : activity.type === 'stock_adjustment' && activity.metadata?.amount !== undefined
+                                ? `Stock updated: ${activity.metadata.amount > 0 ? '+' : ''}${activity.metadata.amount}`
+                                : activity.details}
                         </p>
                       </div>
                       <span className="text-xs whitespace-nowrap ml-2" style={{ color: 'var(--text-secondary)' }}>

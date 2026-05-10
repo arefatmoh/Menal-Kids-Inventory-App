@@ -7,7 +7,9 @@ import {
   ShoppingCart,
   History,
   Users,
-  LayoutGrid
+  LayoutGrid,
+  DollarSign,
+  BarChart3
 } from "lucide-react";
 import { Dashboard } from "./components/Dashboard";
 import { Products } from "./components/Products";
@@ -27,7 +29,12 @@ import { useLaunchCelebration } from "./utils/useLaunchCelebration";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { BranchProvider, useBranch } from "./context/BranchContext";
 import { ExcelUpload } from "./components/ExcelUpload";
-
+import { BarcodeManager } from "./components/BarcodeManager";
+import { StockAudits } from "./components/StockAudits";
+import { QuickStockUpdate } from "./components/QuickStockUpdate";
+import { TelegramSetup } from "./components/TelegramSetup";
+import { Reports } from "./components/Reports";
+import { NotificationBell } from "./components/NotificationBell";
 
 export default function App() {
   // Set favicon
@@ -117,7 +124,7 @@ function AppContent() {
     toast.success("Logged out successfully");
   };
 
-  const isAdmin = userRole === "admin";
+  const isAdmin = userRole === "admin" || userRole === "owner";
 
   // Show login page if not logged in
   if (!isLoggedIn) {
@@ -150,13 +157,23 @@ function AppContent() {
       case "expenses":
         return <Expenses />;
       case "history":
-        return <HistoryView />;
+        return <HistoryView userRole={userRole} username={username} />;
       case "customers":
         return <Customers />;
       case "customerManagement":
         return isAdmin ? <CustomerSegmentation onBack={() => navigate("/")} /> : <Dashboard isAdmin={isAdmin} />;
       case "excel":
         return isAdmin ? <ExcelUpload /> : <Dashboard isAdmin={isAdmin} />;
+      case "barcodes":
+        return isAdmin ? <BarcodeManager onBack={() => navigate("/")} /> : <Dashboard isAdmin={isAdmin} />;
+      case "stockAudits":
+        return isAdmin ? <StockAudits /> : <Dashboard isAdmin={isAdmin} />;
+      case "quickStockUpdate":
+        return isAdmin ? <QuickStockUpdate onBack={() => navigate("/")} /> : <Dashboard isAdmin={isAdmin} />;
+      case "telegramSetup":
+        return isAdmin ? <TelegramSetup onBack={() => navigate("/")} /> : <Dashboard isAdmin={isAdmin} />;
+      case "reports":
+        return isAdmin ? <Reports /> : <Dashboard isAdmin={isAdmin} />;
       default:
         return <Dashboard isAdmin={isAdmin} />;
     }
@@ -164,7 +181,7 @@ function AppContent() {
 
   return (
     <div
-      className="min-h-screen"
+      className="min-h-screen w-full"
       style={{ backgroundColor: "var(--background)" }}
     >
       {/* Toast Notifications */}
@@ -217,14 +234,22 @@ function AppContent() {
                 )
               )}
             </div>
-            <ProfileDropdown
-              onLogout={handleLogout}
-              username={username}
-              userRole={userRole}
-              onCustomerManagementClick={() => navigate("/customerManagement")}
-              onExpensesClick={() => navigate("/expenses")}
-              onExcelClick={() => navigate("/excel")}
-            />
+            <div className="flex items-center gap-1">
+              <NotificationBell username={username} userRole={userRole} />
+              <ProfileDropdown
+                onLogout={handleLogout}
+                username={username}
+                userRole={userRole}
+                onCustomerManagementClick={() => navigate("/customerManagement")}
+                onExpensesClick={() => navigate("/expenses")}
+                onCustomersClick={() => navigate("/customers")}
+                onExcelClick={() => navigate("/excel")}
+                onBarcodeClick={() => navigate("/barcodes")}
+                onStockAuditsClick={() => navigate("/stock-audits")}
+                onQuickStockUpdateClick={() => navigate("/quick-stock-update")}
+                onTelegramClick={() => navigate("/telegram-setup")}
+              />
+            </div>
           </div>
         </div>
       </header>
@@ -245,17 +270,23 @@ function AppContent() {
           <Route path="/customers" element={renderView("customers")} />
           <Route path="/customerManagement" element={renderView("customerManagement")} />
           <Route path="/excel" element={renderView("excel")} />
+          <Route path="/barcodes" element={renderView("barcodes")} />
+          <Route path="/stock-audits" element={renderView("stockAudits")} />
+          <Route path="/quick-stock-update" element={renderView("quickStockUpdate")} />
+          <Route path="/telegram-setup" element={renderView("telegramSetup")} />
+          <Route path="/reports" element={renderView("reports")} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </main>
 
       {/* Bottom Navigation */}
       <nav
-        className="fixed bottom-0 left-0 right-0 z-20"
+        className="fixed bottom-0 left-0 right-0 z-50 w-full"
         style={{
           backgroundColor: "var(--background)",
           borderTop: "1px solid var(--border)",
-          boxShadow: "0 -2px 12px rgba(0, 0, 0, 0.06)",
+          boxShadow: "0 -4px 16px rgba(0, 0, 0, 0.08)",
+          paddingBottom: 'env(safe-area-inset-bottom, 0px)'
         }}
       >
         <div style={{ maxWidth: '512px', margin: '0 auto', padding: '8px 12px' }}>
@@ -278,12 +309,21 @@ function AppContent() {
               active={location.pathname === "/sell"}
               onClick={() => navigate("/sell")}
             />
-            <NavButton
-              icon={<Users size={23} strokeWidth={location.pathname === "/customers" ? 2.5 : 2} />}
-              label="Customers"
-              active={location.pathname === "/customers"}
-              onClick={() => navigate("/customers")}
-            />
+            {isAdmin ? (
+              <NavButton
+                icon={<BarChart3 size={23} strokeWidth={location.pathname === "/reports" ? 2.5 : 2} />}
+                label="Reports"
+                active={location.pathname === "/reports"}
+                onClick={() => navigate("/reports")}
+              />
+            ) : (
+              <NavButton
+                icon={<DollarSign size={23} strokeWidth={location.pathname === "/expenses" ? 2.5 : 2} />}
+                label="Expenses"
+                active={location.pathname === "/expenses"}
+                onClick={() => navigate("/expenses")}
+              />
+            )}
             <NavButton
               icon={<History size={23} strokeWidth={location.pathname === "/history" ? 2.5 : 2} />}
               label="History"

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { User, UserPlus, Settings, LogOut, X, Eye, EyeOff, Users, Receipt, FileSpreadsheet } from 'lucide-react';
+import { User, UserPlus, Settings, LogOut, X, Eye, EyeOff, Users, Receipt, FileSpreadsheet, Barcode, ClipboardCheck } from 'lucide-react';
 import { supabase } from '../utils/supabase/client';
 import { toast } from 'sonner';
 import { useBranch } from '../context/BranchContext';
@@ -17,13 +17,19 @@ interface ProfileDropdownProps {
   userRole: string;
   onCustomerManagementClick?: () => void;
   onExpensesClick?: () => void;
+  onCustomersClick?: () => void;
   onExcelClick?: () => void;
+  onBarcodeClick?: () => void;
+  onStockAuditsClick?: () => void;
+  onQuickStockUpdateClick?: () => void;
+  onTelegramClick?: () => void;
 }
 
-export function ProfileDropdown({ username, onLogout, userRole, onCustomerManagementClick, onExpensesClick, onExcelClick }: ProfileDropdownProps) {
+export function ProfileDropdown({ username, onLogout, userRole, onCustomerManagementClick, onExpensesClick, onCustomersClick, onExcelClick, onBarcodeClick, onStockAuditsClick, onQuickStockUpdateClick, onTelegramClick }: ProfileDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [showCreateUser, setShowCreateUser] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [currentProfile, setCurrentProfile] = useState<Profile | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -198,6 +204,34 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
 
             <button
               onClick={() => {
+                if (onCustomersClick) {
+                  onCustomersClick();
+                }
+                setIsOpen(false);
+              }}
+              className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--text-primary)',
+                padding: '10px 12px',
+                border: 'none',
+                textAlign: 'left',
+                fontSize: '14px',
+                cursor: 'pointer',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              <Users size={18} style={{ color: 'var(--primary)' }} />
+              <span style={{ fontSize: '14px' }}>Customers</span>
+            </button>
+
+            <button
+              onClick={() => {
                 if (onExpensesClick) {
                   onExpensesClick();
                 }
@@ -225,33 +259,150 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
             </button>
 
             {userRole === 'admin' && (
-              <button
-                onClick={() => {
-                  if (onExcelClick) {
-                    onExcelClick();
-                  }
-                  setIsOpen(false);
-                }}
-                className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
-                style={{
-                  backgroundColor: 'transparent',
-                  color: 'var(--text-primary)',
-                  padding: '10px 12px',
-                  border: 'none',
-                  textAlign: 'left',
-                  fontSize: '14px',
-                  cursor: 'pointer',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = 'var(--gray-light)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-              >
-                <FileSpreadsheet size={18} style={{ color: 'var(--primary)' }} />
-                <span style={{ fontSize: '14px' }}>Excel Upload</span>
-              </button>
+              <>
+                <button
+                  onClick={() => {
+                    if (onExcelClick) {
+                      onExcelClick();
+                    }
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    padding: '10px 12px',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <FileSpreadsheet size={18} style={{ color: 'var(--primary)' }} />
+                  <span style={{ fontSize: '14px' }}>Excel Upload</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onBarcodeClick) {
+                      onBarcodeClick();
+                    }
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    padding: '10px 12px',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <Barcode size={18} style={{ color: 'var(--primary)' }} />
+                  <span style={{ fontSize: '14px' }}>Barcode Manager</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onQuickStockUpdateClick) {
+                      onQuickStockUpdateClick();
+                    }
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    padding: '10px 12px',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <FileSpreadsheet size={18} style={{ color: 'var(--primary)' }} />
+                  <span style={{ fontSize: '14px' }}>Quick Stock Update</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onTelegramClick) {
+                      onTelegramClick();
+                    }
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    padding: '10px 12px',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: '#0088cc' }}>
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                  <span style={{ fontSize: '14px' }}>Telegram Setup</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onStockAuditsClick) {
+                      onStockAuditsClick();
+                    }
+                    setIsOpen(false);
+                  }}
+                  className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--text-primary)',
+                    padding: '10px 12px',
+                    border: 'none',
+                    textAlign: 'left',
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  <ClipboardCheck size={18} style={{ color: 'var(--primary)' }} />
+                  <span style={{ fontSize: '14px' }}>Stock Audit</span>
+                </button>
+              </>
             )}
 
             <button
@@ -276,6 +427,30 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
             >
               <Settings size={18} style={{ color: 'var(--primary)' }} />
               <span style={{ fontSize: '14px' }}>Edit Profile</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setShowSettings(true);
+                setIsOpen(false);
+              }}
+              className="w-full flex items-center gap-3 rounded-lg transition-all hover:bg-opacity-80"
+              style={{
+                backgroundColor: 'transparent',
+                color: 'var(--text-primary)',
+                padding: '10px 12px',
+                border: 'none',
+                textAlign: 'left',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = 'var(--gray-light)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = 'transparent';
+              }}
+            >
+              <Settings size={18} style={{ color: 'var(--text-secondary)' }} />
+              <span style={{ fontSize: '14px' }}>Settings</span>
             </button>
 
             <div
@@ -328,6 +503,13 @@ export function ProfileDropdown({ username, onLogout, userRole, onCustomerManage
           }}
         />
       )}
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+        isAdmin={userRole === 'admin' || userRole === 'owner'}
+      />
     </div>
   );
 }
@@ -969,6 +1151,171 @@ function EditProfileModal({ profile, onClose, onUpdate }: EditProfileModalProps)
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function SettingsModal({ isOpen, onClose, isAdmin }: { isOpen: boolean, onClose: () => void, isAdmin: boolean }) {
+  const [settings, setSettings] = useState({ approvals: true, sales: true, updates: true });
+
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        const stored = localStorage.getItem('menal_notification_settings');
+        if (stored) {
+          setSettings({ approvals: true, sales: true, updates: true, ...JSON.parse(stored) });
+        }
+      } catch (e) {}
+    }
+  }, [isOpen]);
+
+  const handleToggle = (key: keyof typeof settings) => {
+    const newSettings = { ...settings, [key]: !settings[key] };
+    setSettings(newSettings);
+    localStorage.setItem('menal_notification_settings', JSON.stringify(newSettings));
+    toast.success('Settings updated');
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" style={{ padding: '20px' }}>
+      <div 
+        className="rounded-xl shadow-xl w-full max-w-md overflow-hidden" 
+        style={{ 
+          backgroundColor: 'var(--background)',
+          border: '1px solid var(--border)',
+          display: 'flex',
+          flexDirection: 'column'
+        }}
+      >
+        <div className="flex justify-between items-center" style={{ padding: '20px', borderBottom: '1px solid var(--border)' }}>
+          <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>Notification Settings</h2>
+          <button 
+            onClick={onClose} 
+            className="p-1.5 rounded-lg transition-colors hover:bg-opacity-80" 
+            style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--gray-light)' }}
+          >
+            <X size={20} />
+          </button>
+        </div>
+        
+        <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          {isAdmin && (
+            <>
+              <div className="flex items-center justify-between rounded-xl" style={{ backgroundColor: 'var(--gray-light)', padding: '16px' }}>
+                <div style={{ paddingRight: '16px' }}>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)', marginBottom: '4px' }}>Return Approvals</p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>System notifications when staff request a return.</p>
+                </div>
+                <button 
+                  onClick={() => handleToggle('approvals')}
+                  style={{
+                    position: 'relative',
+                    display: 'inline-flex',
+                    height: '24px',
+                    width: '44px',
+                    alignItems: 'center',
+                    borderRadius: '9999px',
+                    backgroundColor: settings.approvals ? 'var(--success)' : '#d1d5db',
+                    transition: 'background-color 0.2s',
+                    border: 'none',
+                    cursor: 'pointer',
+                    flexShrink: 0
+                  }}
+                >
+                  <span 
+                    style={{
+                      display: 'inline-block',
+                      height: '18px',
+                      width: '18px',
+                      transform: settings.approvals ? 'translateX(23px)' : 'translateX(3px)',
+                      borderRadius: '9999px',
+                      backgroundColor: 'white',
+                      transition: 'transform 0.2s',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }} 
+                  />
+                </button>
+              </div>
+              
+              <div className="flex items-center justify-between rounded-xl" style={{ backgroundColor: 'var(--gray-light)', padding: '16px' }}>
+                <div style={{ paddingRight: '16px' }}>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)', marginBottom: '4px' }}>Sales Feed</p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>System notifications when staff process a sale.</p>
+                </div>
+                <button 
+                  onClick={() => handleToggle('sales')}
+                  style={{
+                    position: 'relative',
+                    display: 'inline-flex',
+                    height: '24px',
+                    width: '44px',
+                    alignItems: 'center',
+                    borderRadius: '9999px',
+                    backgroundColor: settings.sales ? 'var(--success)' : '#d1d5db',
+                    transition: 'background-color 0.2s',
+                    border: 'none',
+                    cursor: 'pointer',
+                    flexShrink: 0
+                  }}
+                >
+                  <span 
+                    style={{
+                      display: 'inline-block',
+                      height: '18px',
+                      width: '18px',
+                      transform: settings.sales ? 'translateX(23px)' : 'translateX(3px)',
+                      borderRadius: '9999px',
+                      backgroundColor: 'white',
+                      transition: 'transform 0.2s',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    }} 
+                  />
+                </button>
+              </div>
+            </>
+          )}
+
+          {!isAdmin && (
+            <div className="flex items-center justify-between rounded-xl" style={{ backgroundColor: 'var(--gray-light)', padding: '16px' }}>
+              <div style={{ paddingRight: '16px' }}>
+                <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)', marginBottom: '4px' }}>Inventory Updates</p>
+                <p className="text-xs" style={{ color: 'var(--text-secondary)', lineHeight: '1.4' }}>System notifications when admin updates stock or adds products.</p>
+              </div>
+              <button 
+                onClick={() => handleToggle('updates')}
+                style={{
+                  position: 'relative',
+                  display: 'inline-flex',
+                  height: '24px',
+                  width: '44px',
+                  alignItems: 'center',
+                  borderRadius: '9999px',
+                  backgroundColor: settings.updates ? 'var(--success)' : '#d1d5db',
+                  transition: 'background-color 0.2s',
+                  border: 'none',
+                  cursor: 'pointer',
+                  flexShrink: 0
+                }}
+              >
+                <span 
+                  style={{
+                    display: 'inline-block',
+                    height: '18px',
+                    width: '18px',
+                    transform: settings.updates ? 'translateX(23px)' : 'translateX(3px)',
+                    borderRadius: '9999px',
+                    backgroundColor: 'white',
+                    transition: 'transform 0.2s',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                  }} 
+                />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

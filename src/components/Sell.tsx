@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { Search, ShoppingCart, Trash2, Plus, Minus, DollarSign, Check } from 'lucide-react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -8,15 +8,9 @@ import { toast } from 'sonner';
 import { supabase } from '../utils/supabase/client';
 import { useBranch } from '../context/BranchContext';
 import { fetchCategories as fetchCategoriesUtil } from '../utils/categories';
+import { findProductByBarcode } from '../utils/barcode';
 
-// Simple debounce function
-function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
-  let timeout: NodeJS.Timeout;
-  return ((...args: Parameters<T>) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => func(...args), wait);
-  }) as T;
-}
+
 
 interface Product {
   id: string;
@@ -53,8 +47,7 @@ type PaymentMethod = 'cash' | 'bank' | 'telebirr';
 
 export function Sell() {
   const { currentBranchId } = useBranch();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]); // Full dataset in memory
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -74,40 +67,54 @@ export function Sell() {
   const [tierUpgradeData, setTierUpgradeData] = useState<any>(null);
 
   const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [totalCount, setTotalCount] = useState(0);
   const PRODUCTS_PER_PAGE = 20;
 
-  const fetchProducts = async (pageNumber = 0, category = 'all', search = '') => {
+  // Client-side filtering — instant, no server calls
+  const filteredProducts = useMemo(() => {
+    let result = allProducts;
+
+    if (selectedCategory !== 'all') {
+      result = result.filter(p => p.category === selectedCategory);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      result = result.filter(p => p.name.toLowerCase().includes(q));
+    }
+
+    return result;
+  }, [allProducts, selectedCategory, searchQuery]);
+
+  // Client-side pagination
+  const totalCount = filteredProducts.length;
+  const totalPages = Math.ceil(totalCount / PRODUCTS_PER_PAGE) || 1;
+  const paginatedProducts = useMemo(() => {
+    const from = page * PRODUCTS_PER_PAGE;
+    return filteredProducts.slice(from, from + PRODUCTS_PER_PAGE);
+  }, [filteredProducts, page]);
+  const hasMore = (page + 1) * PRODUCTS_PER_PAGE < totalCount;
+
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(0);
+  }, [searchQuery, selectedCategory]);
+
+  // Load ALL in-stock products once into memory
+  const fetchAllProducts = async () => {
     if (!currentBranchId) return;
     setLoading(true);
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from('menal_products')
-        .select('*', { count: 'exact' })
+        .select('*')
         .eq('branch_id', currentBranchId)
-        .gt('stock', 0);
-
-      if (category !== 'all') {
-        query = query.eq('category', category);
-      }
-
-      if (search) {
-        query = query.ilike('name', `%${search}%`);
-      }
-
-      const from = pageNumber * PRODUCTS_PER_PAGE;
-      const to = from + PRODUCTS_PER_PAGE - 1;
-
-      const { data, error, count } = await query
-        .order('name', { ascending: true })
-        .range(from, to);
+        .gt('stock', 0)
+        .order('name', { ascending: true });
 
       if (error) {
         if (error.code === '42703' || error.code === '42P01') {
           console.error('Database schema error:', error);
-          setProducts([]);
-          setHasMore(false);
+          setAllProducts([]);
           return;
         }
         throw error;
@@ -121,26 +128,7 @@ export function Sell() {
         stock: p.stock ?? 0,
       }));
 
-      if (newProducts.length < PRODUCTS_PER_PAGE) {
-        setHasMore(false);
-      } else {
-        setHasMore(true);
-      }
-
-      setProducts(newProducts);
-      setFilteredProducts(newProducts);
-      setTotalCount(count || 0);
-
-      // We still need categories for the filter dropdown
-      // Note: In a real efficient app, we'd fetch distinct categories separately
-      // For now, we'll keep the existing category logic if possible, 
-      // but strictly speaking, we might not see all categories if they are on page 2.
-      // A separate category fetch is better, but let's stick to the requested scope first.
-      // Actually, let's try to fetch categories separately once to ensure the dropdown is full.
-      if (pageNumber === 0 && category === 'all' && !search) {
-        fetchCategories();
-      }
-
+      setAllProducts(newProducts);
     } catch (error) {
       console.error('Products fetch error:', error);
       toast.error('Failed to load products');
@@ -159,62 +147,126 @@ export function Sell() {
     }
   };
 
-  // Debounced search function
-  const debouncedSearch = useRef(
-    debounce((category: string, search: string) => {
-      fetchProducts(0, category, search);
-    }, 300)
-  ).current;
-
+  // Initial load
   useEffect(() => {
-    setPage(0);
-    debouncedSearch(selectedCategory, searchQuery);
-  }, [currentBranchId, selectedCategory, searchQuery]);
+    if (currentBranchId) {
+      fetchAllProducts();
+      fetchCategories();
+    }
+  }, [currentBranchId]);
 
   const handleNextPage = () => {
-    const nextPage = page + 1;
-    setPage(nextPage);
-    fetchProducts(nextPage, selectedCategory, searchQuery);
+    setPage(prev => prev + 1);
   };
 
   const handlePrevPage = () => {
-    const prevPage = Math.max(0, page - 1);
-    setPage(prevPage);
-    fetchProducts(prevPage, selectedCategory, searchQuery);
+    setPage(prev => Math.max(0, prev - 1));
   };
 
   const addToCart = (product: Product) => {
-    const existingItem = cart.find(item => item.productId === product.id);
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.productId === product.id);
+      if (existingItem) {
+        if (existingItem.quantity >= product.stock) {
+          toast.error(`Not enough stock for "${product.name}"`);
+          return prevCart;
+        }
+        return prevCart.map(item =>
+          item.productId === product.id
+            ? { 
+                ...item, 
+                quantity: item.quantity + 1,
+                hasDifferentPrices: false,
+                individualPrices: []
+              }
+            : item
+        );
+      } else {
+        return [...prevCart, {
+          productId: product.id,
+          productName: product.name,
+          quantity: 1,
+          price: product.price,
+          originalPrice: product.price,
+          stock: product.stock,
+          hasDifferentPrices: false,
+          individualPrices: [product.price]
+        }];
+      }
+    });
+  };
 
-    if (existingItem) {
-      if (existingItem.quantity >= product.stock) {
-        alert('Not enough stock available');
+  // Invisible barcode scanner listener
+  // Barcode scanners type characters very fast (<50ms gap) and end with Enter
+  const scanBufferRef = useRef('');
+  const scanTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const scanLockRef = useRef(false);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if user is typing in an input/textarea/select
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+      if (e.key === 'Enter' && scanBufferRef.current.length >= 3) {
+        e.preventDefault();
+        const code = scanBufferRef.current;
+        scanBufferRef.current = '';
+        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+        // Process the scanned barcode
+        if (!scanLockRef.current) {
+          scanLockRef.current = true;
+          (async () => {
+            try {
+              if (!currentBranchId) return;
+              const product = await findProductByBarcode(currentBranchId, code);
+              if (!product) {
+                toast.error(`No product matched barcode "${code}"`);
+                return;
+              }
+              if (product.stock <= 0) {
+                toast.error(`"${product.name}" is out of stock`);
+                return;
+              }
+              addToCart({
+                id: product.id,
+                name: product.name,
+                category: product.category,
+                price: product.price ?? 0,
+                stock: product.stock ?? 0,
+              });
+              // Check if it was already in cart to show appropriate message
+              const wasInCart = cart.find(item => item.productId === product.id);
+              if (wasInCart) {
+                toast.success(`"${product.name}" qty +1 (${wasInCart.quantity + 1})`);
+              } else {
+                toast.success(`Added "${product.name}" to cart`);
+              }
+            } catch (err) {
+              console.error('Barcode scan error:', err);
+              toast.error('Failed to look up barcode');
+            } finally {
+              scanLockRef.current = false;
+            }
+          })();
+        }
         return;
       }
-      setCart(cart.map(item =>
-        item.productId === product.id
-          ? { 
-              ...item, 
-              quantity: item.quantity + 1,
-              // Reset different prices mode when quantity changes
-              hasDifferentPrices: false,
-              individualPrices: []
-            }
-          : item
-      ));
-    } else {
-      setCart([...cart, {
-        productId: product.id,
-        productName: product.name,
-        quantity: 1,
-        price: product.price,
-        originalPrice: product.price,
-        stock: product.stock,
-        hasDifferentPrices: false,
-        individualPrices: [product.price]
-      }]);
-    }
-  };
+
+      // Only accumulate printable single characters (digits/letters)
+      if (e.key.length === 1) {
+        scanBufferRef.current += e.key;
+        // Reset buffer if typing is too slow (>100ms gap = human typing)
+        if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+        scanTimerRef.current = setTimeout(() => {
+          scanBufferRef.current = '';
+        }, 100);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [currentBranchId, cart]);
 
   const updateQuantity = (productId: string, change: number) => {
     setCart(cart.map(item => {
@@ -376,6 +428,7 @@ export function Sell() {
   };
 
   const handleCompleteSale = async () => {
+    if (processing) return; // Prevent double submission
     if (cart.length === 0) {
       alert('Cart is empty');
       return;
@@ -531,7 +584,7 @@ export function Sell() {
         setSelectedCustomer(null);
         setCustomerName('');
         setCustomerPhone('');
-        fetchProducts(); // Refresh products to update stock
+        fetchAllProducts(); // Refresh products to update stock
       }, 2000);
     } catch (error: any) {
       console.error('Complete sale error:', error);
@@ -1057,6 +1110,7 @@ export function Sell() {
         </div>
       )}
 
+
       {/* Search Bar */}
       <div className="rounded-xl shadow-sm border" style={{ backgroundColor: 'var(--background)', borderColor: 'var(--border)', padding: '12px', marginBottom: '12px' }}>
         <div className="flex items-center gap-2">
@@ -1107,7 +1161,7 @@ export function Sell() {
 
       {/* Ultra-Compact Product Grid - No Scrolling */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-        {filteredProducts.map((product) => (
+        {paginatedProducts.map((product) => (
           <button
             key={product.id}
             onClick={() => addToCart(product)}
@@ -1151,25 +1205,25 @@ export function Sell() {
       {/* Pagination Controls */}
       <div className="flex flex-col items-center gap-4 mt-8 pt-6 border-t" style={{ borderColor: 'var(--border)' }}>
         <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-          Showing {Math.min(totalCount, page * PRODUCTS_PER_PAGE + 1)}-{Math.min((page + 1) * PRODUCTS_PER_PAGE, totalCount)} of {totalCount}
+          Showing {totalCount === 0 ? 0 : page * PRODUCTS_PER_PAGE + 1}-{Math.min((page + 1) * PRODUCTS_PER_PAGE, totalCount)} of {totalCount}
         </div>
 
         <div className="flex items-center gap-6">
           <button
             onClick={handlePrevPage}
-            disabled={page === 0 || loading}
+            disabled={page === 0}
             className="pagination-btn"
           >
             Previous
           </button>
 
           <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
-            Page {page + 1} of {Math.ceil(totalCount / PRODUCTS_PER_PAGE) || 1}
+            Page {page + 1} of {totalPages}
           </span>
 
           <button
             onClick={handleNextPage}
-            disabled={!hasMore || loading}
+            disabled={!hasMore}
             className="pagination-btn"
           >
             Next

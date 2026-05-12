@@ -60,12 +60,12 @@ export function ProductForm({ product, onClose, onProductAdded }: ProductFormPro
   useEffect(() => {
     if (product) {
       setFormData({
-        name: product.name,
-        category: product.category,
-        price: product.price.toString(),
-        stock: product.stock.toString(),
-        minStock: product.minStock.toString(),
-        notes: product.notes,
+        name: product.name || '',
+        category: product.category || '',
+        price: product.price?.toString() || '0',
+        stock: product.stock?.toString() || '0',
+        minStock: product.minStock?.toString() || '0',
+        notes: product.notes || '',
       });
     }
   }, [product]);
